@@ -376,9 +376,11 @@ async fn launch_codey_inner_attempt(state: &Arc<AppState>) -> anyhow::Result<Val
     ensure_runtime_can_start(state).map_err(anyhow::Error::msg)?;
     if state.runtime.lock().await.is_some() {
         super::storage_guards::start_trace_guard_watcher(state).await;
+        super::sessions::start_cleanup_watcher(state).await;
         return Ok(json!({"status":"already_running"}));
     }
     super::storage_guards::stop_trace_guard_watcher(state).await;
+    super::sessions::stop_cleanup_watcher(state).await;
     #[cfg(windows)]
     ensure_windows_codex_app_path(state)
         .await
@@ -460,6 +462,7 @@ async fn launch_codey_inner_attempt(state: &Arc<AppState>) -> anyhow::Result<Val
     let startup_warning = runtime.startup_warning.clone();
     *state.runtime.lock().await = Some(Arc::new(runtime));
     super::storage_guards::start_trace_guard_watcher(state).await;
+    super::sessions::start_cleanup_watcher(state).await;
     let runtime_generation = state.runtime_generation.fetch_add(1, Ordering::AcqRel) + 1;
     super::sync_wechat_claw_service(state).await;
     if let Some(initial_scan_task) = initial_scan_task {
@@ -665,6 +668,7 @@ async fn stop_runtime_for_restart_locked(state: &Arc<AppState>) -> Result<Value,
 }
 
 async fn stop_codey_runtime_locked(state: &Arc<AppState>) -> Result<Value, String> {
+    super::sessions::stop_cleanup_watcher(state).await;
     super::extensions::stop_scheduler(state).await;
     super::stop_wechat_claw_service(state).await;
     stop_waiting_webhook_watcher(state).await;
@@ -675,6 +679,7 @@ async fn stop_codey_runtime_locked(state: &Arc<AppState>) -> Result<Value, Strin
         if let Err(error) = runtime.stop().await {
             *state.runtime.lock().await = Some(runtime);
             super::storage_guards::start_trace_guard_watcher(state).await;
+            super::sessions::start_cleanup_watcher(state).await;
             return Err(format!("{error:#}"));
         }
     } else {
@@ -695,6 +700,7 @@ pub async fn stop_codey_runtime(state: &Arc<AppState>) -> Result<Value, String> 
 
 pub(crate) async fn reap_runtime_child_before_exit(state: &Arc<AppState>) -> Result<(), String> {
     let _operation = state.runtime_operation.lock().await;
+    super::sessions::stop_cleanup_watcher(state).await;
     super::extensions::stop_scheduler(state).await;
     super::storage_guards::stop_trace_guard_watcher(state).await;
     let runtime = state.runtime.lock().await.clone();
@@ -715,6 +721,7 @@ pub(crate) async fn cleanup_failed_runtime_start(state: &Arc<AppState>) -> Resul
 
 pub async fn begin_shutdown(state: &Arc<AppState>) {
     state.shutting_down.store(true, Ordering::Release);
+    super::sessions::stop_cleanup_watcher(state).await;
     super::storage_guards::stop_trace_guard_watcher(state).await;
     let restart = state.restart_task.lock().await.take();
     if let Some(ScheduledRestart { cancel, task }) = restart {

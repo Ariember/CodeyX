@@ -3,11 +3,11 @@ use rusqlite::{Connection, params};
 use serde_json::json;
 use tempfile::TempDir;
 
-const A: &str = "11111111-1111-4111-8111-111111111111";
-const B: &str = "22222222-2222-4222-8222-222222222222";
-const C: &str = "33333333-3333-4333-8333-333333333333";
+pub(super) const A: &str = "11111111-1111-4111-8111-111111111111";
+pub(super) const B: &str = "22222222-2222-4222-8222-222222222222";
+pub(super) const C: &str = "33333333-3333-4333-8333-333333333333";
 
-fn rollout(home: &Path, id: &str, archived: bool) -> std::path::PathBuf {
+pub(super) fn rollout(home: &Path, id: &str, archived: bool) -> std::path::PathBuf {
     let folder = home.join(if archived {
         "archived_sessions/2026/10/17"
     } else {
@@ -27,7 +27,7 @@ fn rollout(home: &Path, id: &str, archived: bool) -> std::path::PathBuf {
     path
 }
 
-fn fixture() -> TempDir {
+pub(super) fn fixture() -> TempDir {
     let home = tempfile::tempdir().unwrap();
     rollout(home.path(), A, false);
     rollout(home.path(), B, true);

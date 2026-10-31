@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-async function open(page) {
-  await page.goto("/codey/tests/ui-browser.html?platform=windows");
+async function open(page, theme = "light") {
+  await page.goto(`/codey/tests/ui-browser.html?platform=windows&theme=${theme}`);
   await expect(page.getByRole("button", { name: "已保存", exact: true })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "会话管理", exact: true }).click();
   await expect(page.getByRole("checkbox").first()).toBeVisible();
@@ -31,6 +31,46 @@ test("管理面板会话选择、归档筛选、永久清理确认和重启提�
   await expect(page.getByRole("button", { name: "重启 Codex", exact: true }).last()).toBeEnabled();
   expect(errors).toEqual([]);
 });
+
+for (const [theme, width] of [["light", 1280], ["dark", 620]]) {
+  test(`自定义天数筛选与自动清理确认保存：${theme} / ${width}`, async ({ page }) => {
+    const errors = []; page.on("pageerror", error => errors.push(error.message));
+    await page.setViewportSize({ width, height: 900 });
+    await open(page, theme);
+    const toggle = page.getByRole("switch", { name: "启用自动清理", exact: true });
+    const days = page.getByRole("spinbutton", { name: "保留天数", exact: true });
+    const save = page.getByRole("button", { name: "保存清理设置", exact: true });
+    await expect(toggle).not.toBeChecked(); await expect(days).toHaveValue("30"); await expect(save).toBeDisabled();
+    await days.fill(""); await expect(page.getByText("保留天数须为 1 至 36500 的整数。", { exact: true })).toBeVisible();
+    await expect(save).toBeDisabled();
+    await days.fill("30");
+    await page.getByRole("combobox", { name: "时间范围" }).selectOption("expired");
+    await expect(page.getByRole("checkbox", { name: "选择会话 管理面板功能开发", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: "选择会话 项目会话 3", exact: true })).toBeVisible();
+    await toggle.press("Space");
+    const panel = page.getByRole("region", { name: "自动清理", exact: true });
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `output/playwright/session-retention-${theme}.png` });
+    expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await save.click();
+    const dialog = page.getByRole("dialog", { name: "启用此自动清理规则？", exact: true });
+    await expect(dialog).toContainText("超过 30 天"); await expect(dialog).toContainText("无法撤销");
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(page.getByText("共 25 个 · 已选 0 个", { exact: true })).toBeVisible();
+    await save.click(); await dialog.getByRole("button", { name: "确认启用自动清理", exact: true }).click();
+    await expect(page.getByText(/自动清理设置已保存/)).toBeVisible();
+    await expect(page.getByText("共 2 个 · 已选 0 个", { exact: true })).toBeVisible();
+    await expect(page.getByText("没有符合条件的会话。", { exact: true })).toBeVisible();
+    await expect(toggle).toBeChecked(); await expect(save).toBeDisabled();
+    await page.getByRole("combobox", { name: "时间范围" }).selectOption("all");
+    await expect(page.getByRole("checkbox", { name: "选择会话 管理面板功能开发", exact: true })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "选择会话 已归档的界面方案", exact: true })).toBeVisible();
+    await toggle.press("Space"); await save.click();
+    await expect(page.getByText("自动清理已关闭。", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "启用此自动清理规则？", exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
 
 test("Shadow DOM 中逐项、整行与键盘选择同步，清理保留未选会话", async ({ page }) => {
   await open(page);

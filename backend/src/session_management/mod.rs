@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 
 mod database;
 mod files;
+mod retention;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use retention::{SavePolicyRequest, automatic_cleanup, save_policy};
 
 const PENDING: &str = ".codey-session-cleanup-v1.json";
 static OPERATION: Mutex<()> = Mutex::new(());
@@ -32,6 +35,14 @@ pub(crate) struct Inventory {
     sessions: Vec<SessionEntry>,
     revision: String,
     pending_count: usize,
+    cleanup_policy: retention::CleanupPolicy,
+    cleanup_policy_revision: String,
+}
+
+struct SessionScan {
+    sessions: Vec<SessionEntry>,
+    revision: String,
+    pending_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,7 +58,7 @@ pub(crate) struct DeleteRequest {
 pub(crate) struct CleanupResult {
     selected_count: usize,
     restart_required: bool,
-    errors: Vec<String>,
+    pub(crate) errors: Vec<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -79,7 +90,7 @@ fn read_pending(home: &Path) -> Result<Pending> {
     Ok(pending)
 }
 
-fn scan(home: &Path) -> Result<Inventory> {
+fn scan(home: &Path) -> Result<SessionScan> {
     let mut entries = BTreeMap::new();
     files::inventory(home, &mut entries)?;
     database::inventory(home, &mut entries)?;
@@ -92,7 +103,7 @@ fn scan(home: &Path) -> Result<Inventory> {
     let revision = crate::fs_util::sha256_hex(&serde_json::to_vec(&scope)?);
     let mut sessions = entries.into_values().collect::<Vec<_>>();
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
-    Ok(Inventory {
+    Ok(SessionScan {
         sessions,
         revision,
         pending_count: pending.ids.len(),
@@ -103,7 +114,16 @@ pub(crate) fn list(home: &Path) -> Result<Inventory> {
     let _guard = OPERATION
         .lock()
         .map_err(|_| anyhow::anyhow!("会话管理锁不可用"))?;
-    scan(home)
+    let scanned = scan(home)?;
+    let cleanup_policy = retention::read_policy(home)?;
+    let cleanup_policy_revision = retention::policy_revision(&cleanup_policy)?;
+    Ok(Inventory {
+        sessions: scanned.sessions,
+        revision: scanned.revision,
+        pending_count: scanned.pending_count,
+        cleanup_policy,
+        cleanup_policy_revision,
+    })
 }
 
 fn lock(home: &Path) -> Result<fs::File> {
@@ -148,6 +168,10 @@ pub(crate) fn remove(home: &Path, request: DeleteRequest) -> Result<CleanupResul
         "所选会话已变化，请刷新列表"
     );
     let ids = request.ids.into_iter().collect::<BTreeSet<_>>();
+    remove_selected(home, &ids)
+}
+
+fn remove_selected(home: &Path, ids: &BTreeSet<String>) -> Result<CleanupResult> {
     // 先固定删除集合；重启时绝不把新建会话追加到“全部”中。
     let mut pending = read_pending(home)?;
     pending.ids.extend(ids.iter().cloned());
@@ -156,7 +180,7 @@ pub(crate) fn remove(home: &Path, request: DeleteRequest) -> Result<CleanupResul
         files::checked(home, &pending_path)?;
     }
     crate::fs_util::atomic_write_private(&pending_path, &serde_json::to_vec(&pending)?)?;
-    let errors = clean(home, &ids, false);
+    let errors = clean(home, ids, false);
     Ok(CleanupResult {
         selected_count: ids.len(),
         restart_required: true,

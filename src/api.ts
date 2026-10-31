@@ -76,6 +76,7 @@ export const CODEY_API_COMMANDS = [
   "cancel_fastctx_native_tool",
   "list_codex_sessions",
   "delete_codex_sessions",
+  "save_codex_session_cleanup_policy",
   "conversation_git_status",
   "conversation_git_preview",
   "conversation_git_push_preview",

@@ -604,7 +604,7 @@ if (import.meta.env.DEV) {
       if (command === "codex_extensions") return extensionsPreview(args?.request as Record<string, unknown>);
       if (command === "builtin_tools") return builtinToolsPreview(args);
       if (command === "config_backup") return backupPreview(args);
-      if (command === "list_codex_sessions" || command === "delete_codex_sessions") return sessionsPreview(command, args);
+      if (command === "list_codex_sessions" || command === "delete_codex_sessions" || command === "save_codex_session_cleanup_policy") return sessionsPreview(command, args);
 
       if (command === "plugin_marketplace_status" || command === "repair_plugin_marketplace" || command === "prepare_computer_use") {
         const supported = previewClientPlatform === "macos" || previewClientPlatform === "windows";

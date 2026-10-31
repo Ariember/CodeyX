@@ -163,6 +163,7 @@ pub struct AppState {
     trace_log_write_protection_active: AtomicBool,
     pub(crate) trace_log_guard_stats: trace_log_guard::TraceLogGuardStatsHandle,
     trace_log_guard_watcher: Mutex<Option<storage_guards::TraceLogGuardWatcher>>,
+    session_cleanup_watcher: Mutex<Option<sessions::SessionCleanupWatcher>>,
     pub crashpad_pending_stats: CrashpadPendingStatsHandle,
     pub startup_error: RwLock<Option<String>>,
     /// Kept apart from `startup_error`, which each launch overwrites and hot
@@ -298,6 +299,7 @@ impl Default for AppState {
             trace_log_write_protection_active: AtomicBool::new(false),
             trace_log_guard_stats: trace_log_guard::TraceLogGuardStatsHandle::default(),
             trace_log_guard_watcher: Mutex::new(None),
+            session_cleanup_watcher: Mutex::new(None),
             crashpad_pending_stats: CrashpadPendingStatsHandle::idle(protect_crashpad_pending),
             startup_error: RwLock::new(None),
             config_load_error,
@@ -1192,7 +1194,7 @@ pub async fn invoke_api(state: &Arc<AppState>, command: &str, args: Value) -> Va
         "get_fastctx_native_tools" | "call_fastctx_native_tool" | "cancel_fastctx_native_tool" => {
             fastctx_native::invoke(state, command, &args).await
         }
-        "list_codex_sessions" | "delete_codex_sessions" => {
+        "list_codex_sessions" | "delete_codex_sessions" | "save_codex_session_cleanup_policy" => {
             sessions::invoke(state, command, &args).await
         }
         "repair_plugin_marketplace" => repair_plugin_marketplace().await,

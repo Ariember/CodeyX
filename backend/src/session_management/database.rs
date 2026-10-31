@@ -216,11 +216,13 @@ pub(super) fn inventory(home: &Path, entries: &mut BTreeMap<String, SessionEntry
                 "''".into()
             };
             let sql = format!(
-                "SELECT {}, {}, {}, {}, {} FROM {} WHERE {filter}",
+                "SELECT {}, {}, {}, {}, {}, {}, {} FROM {} WHERE {filter}",
                 quote(id),
                 title,
                 field(&["cwd"], "''"),
-                field(&["updated_at_ms", "updated_at", "source_updated_at"], "0"),
+                field(&["updated_at_ms"], "0"),
+                field(&["updated_at"], "0"),
+                field(&["source_updated_at"], "0"),
                 field(&["archived"], "0"),
                 quote(&table)
             );
@@ -231,12 +233,16 @@ pub(super) fn inventory(home: &Path, entries: &mut BTreeMap<String, SessionEntry
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, f64>(3)?,
-                        row.get::<_, i64>(4)?,
+                        [
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, f64>(4)?,
+                            row.get::<_, f64>(5)?,
+                        ],
+                        row.get::<_, i64>(6)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            for (id, title, cwd, timestamp, archived) in rows {
+            for (id, title, cwd, timestamps, archived) in rows {
                 if !super::valid_id(&id) {
                     continue;
                 }
@@ -247,11 +253,14 @@ pub(super) fn inventory(home: &Path, entries: &mut BTreeMap<String, SessionEntry
                 if !cwd.is_empty() {
                     value.cwd = cwd;
                 }
-                value.updated_at = value.updated_at.max(if timestamp < 100_000_000_000.0 {
-                    (timestamp * 1000.0) as i64
-                } else {
-                    timestamp as i64
-                });
+                // 兼容字段可能为空或不同步，任一来源的近期活动都应保留会话。
+                for timestamp in timestamps {
+                    value.updated_at = value.updated_at.max(if timestamp < 100_000_000_000.0 {
+                        (timestamp * 1000.0) as i64
+                    } else {
+                        timestamp as i64
+                    });
+                }
                 value.archived |= archived != 0;
             }
         }
