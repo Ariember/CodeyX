@@ -2038,6 +2038,7 @@
     if (pendingScanRoots.size) {
       scheduleIncrementalScan(null);
     }
+    if (document.visibilityState === "hidden") return;
     const sessionId = getSessionId();
     if (
       sessionId

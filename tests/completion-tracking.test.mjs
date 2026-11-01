@@ -1172,3 +1172,34 @@ test("imports from the tasks header using the project stored in the file", async
   });
   assert.equal(button.disabled, false);
 });
+
+test("hidden windows skip layout-based session detection until they become visible", async () => {
+  const events = [];
+  const runtime = loadInjection({
+    initialSessionId: "",
+    codexSessionController: createRecoveryController(events),
+  });
+  await flushMicrotasks();
+  const getClientRects = FakeElement.prototype.getClientRects;
+  let layoutReads = 0;
+  FakeElement.prototype.getClientRects = function () {
+    layoutReads += 1;
+    return getClientRects.call(this);
+  };
+  try {
+    runtime.document.visibilityState = "hidden";
+    runtime.setSessionId("session-1");
+    runtime.emitMutations([{ type: "childList", target: new FakeElement(), addedNodes: [], removedNodes: [] }]);
+    await flushMicrotasks();
+    assert.equal(layoutReads, 0);
+    assert.equal(events.length, 0);
+
+    runtime.document.visibilityState = "visible";
+    runtime.emitMutations([{ type: "childList", target: new FakeElement(), addedNodes: [], removedNodes: [] }]);
+    await flushMicrotasks();
+    assert.ok(layoutReads > 0);
+    assert.deepEqual(events.map((event) => event.payload.conversationId), ["session-1"]);
+  } finally {
+    FakeElement.prototype.getClientRects = getClientRects;
+  }
+});

@@ -514,3 +514,26 @@ test("turning off the enhancement closes previews and hides the button", async (
   assert.equal(env.panel(), null);
   assert.equal(env.window.__codeyConversationGit.snapshot().visible, false);
 });
+
+test("defers composer layout reads to the next frame and skips them while the window is hidden", async () => {
+  const env = harness(); await env.load();
+  const frames = [];
+  env.window.requestAnimationFrame = (callback) => frames.push(callback);
+  const composerContext = env.window.__codeyPromptOptimize.composerContext;
+  let layoutReads = 0;
+  env.window.__codeyPromptOptimize.composerContext = () => { layoutReads += 1; return composerContext(); };
+  const runFrame = () => frames.splice(0).forEach((callback) => callback());
+
+  env.document.hidden = true;
+  env.mutate(); env.mutate(); env.window.dispatchEvent({ type: "focus" });
+  await env.tick();
+  assert.equal(layoutReads, 0);
+  assert.equal(frames.length, 1);
+
+  env.document.hidden = false;
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(frames.length, 1);
+  runFrame();
+  assert.equal(layoutReads, 1);
+  assert.equal(env.window.__codeyConversationGit.snapshot().visible, true);
+});

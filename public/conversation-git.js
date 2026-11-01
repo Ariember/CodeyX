@@ -1154,9 +1154,9 @@
   };
   const refresh = async () => {
     if (timer) { clearTimeout(timer); timer = 0; }
+    if (document.hidden) return;
     const current = syncContext();
     if (!enabled || !sessionId || !current?.target) return;
-    if (document.hidden) return;
     const active = checks.get(sessionId);
     // 同一会话合并查询，新会话可使用第二个名额，快速导航只保留最后一次补查。
     if (active?.epoch === generation) return;
@@ -1205,6 +1205,11 @@
     timerDelay = delay;
     timer = setTimeout(() => { timer = 0; void refresh(); }, delay);
   };
+  let syncFrame = 0;
+  const scheduleInFrame = () => {
+    if (typeof window.requestAnimationFrame !== "function") return schedule();
+    if (!syncFrame) syncFrame = window.requestAnimationFrame(() => { syncFrame = 0; schedule(); });
+  };
   const load = async () => {
     try {
       const config = await call("/settings/get", {});
@@ -1215,8 +1220,9 @@
     } catch { ready = false; enabled = false; button.style.display = "none"; }
   };
   window.addEventListener("codey:config-changed", load);
-  for (const event of ["popstate", "hashchange", "focus"]) window.addEventListener(event, schedule);
-  document.addEventListener("visibilitychange", schedule);
+  for (const event of ["popstate", "hashchange"]) window.addEventListener(event, schedule);
+  window.addEventListener("focus", scheduleInFrame);
+  document.addEventListener("visibilitychange", scheduleInFrame);
   document.addEventListener("keydown", (event) => {
     if (!panel) return;
     if (event.key === "Escape" && (!busy || previewWork)) { close(); button.focus(); }
@@ -1237,7 +1243,7 @@
       if (!button.isConnected && [...(mutation.removedNodes || [])].includes(button)) return true;
       const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
       return !nodes.length || nodes.some((node) => !ownNode(node));
-    })) schedule();
+    })) scheduleInFrame();
   };
   const options = { childList: true, subtree: true, attributes: true, attributeFilter: ["data-above-composer-conversation-id"] };
   if (window.__codeyMutationDispatcher?.subscribe) window.__codeyMutationDispatcher.subscribe(mutationHandler, options);
