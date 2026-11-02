@@ -1,4 +1,5 @@
 import { expect, test as base } from "@playwright/test";
+import { fileURLToPath } from "node:url";
 
 const test = base.extend({
   page: async ({ page }, use) => {
@@ -23,6 +24,27 @@ async function openSettings(page) {
   });
   await page.getByRole("button", { name: "提示词优化", exact: true }).click();
 }
+
+test("共享观察器接收输入框文本变化并更新优化按钮", async ({ page }) => {
+  await page.setContent(`<main style="margin:200px 40px 0;width:600px">
+    <div data-above-composer-conversation-id="test-session"></div>
+    <div id="composer" contenteditable="true" role="textbox" style="min-height:80px">initial</div>
+    <div style="display:flex;gap:12px"><button>完全访问</button><button>发送</button></div>
+  </main>`);
+  await page.evaluate(() => {
+    window.__codexSessionDeleteBridge = async () => ({ promptOptimization: { enabled: true, mode: "codeyRoute" } });
+  });
+  for (const name of ["codey-bridge", "prompt-optimize"]) {
+    await page.addScriptTag({ path: fileURLToPath(new URL(`../../public/${name}.js`, import.meta.url)) });
+  }
+  const button = page.locator("#codey-prompt-optimize-button");
+  await expect(button).toBeVisible();
+  await expect(button).toBeEnabled();
+  await page.locator("#composer").evaluate(element => { element.firstChild.nodeValue = ""; });
+  await expect(button).toBeDisabled();
+  await page.locator("#composer").evaluate(element => { element.firstChild.nodeValue = "updated"; });
+  await expect(button).toBeEnabled();
+});
 
 async function complete(page, index, response) {
   await page.evaluate(({ index, response }) => window.promptBehavior.pending[index](response), { index, response });

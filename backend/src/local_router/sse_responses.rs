@@ -728,6 +728,13 @@ pub(crate) async fn finish_chunked_response(stream: &mut TcpStream) -> Result<()
 }
 
 pub(crate) fn responses_event_sequence(response: &Value) -> Result<Vec<Value>> {
+    run_json_work(
+        json_value_reaches_serialized_threshold(response, REQUEST_JSON_OFFLOAD_BYTES),
+        || build_responses_event_sequence(response),
+    )
+}
+
+fn build_responses_event_sequence(response: &Value) -> Result<Vec<Value>> {
     let response_id = response
         .get("id")
         .and_then(Value::as_str)
@@ -941,4 +948,27 @@ pub(crate) fn reason_phrase(status: u16) -> &'static str {
         .ok()
         .and_then(|status| status.canonical_reason())
         .unwrap_or("Unknown")
+}
+
+#[cfg(test)]
+mod event_offload_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn large_response_keeps_event_order_and_tool_arguments() {
+        for status in ["completed", "incomplete"] {
+            let text = "x".repeat(REQUEST_JSON_OFFLOAD_BYTES);
+            let response = json!({"id":"resp_large", "status": status, "output": [
+                {"id":"msg", "type":"message", "role":"assistant", "content":[{"type":"output_text", "text":text}]},
+                {"id":"call", "type":"function_call", "call_id":"lookup", "name":"lookup", "arguments":"{\"q\":\"rust\"}"}
+            ]});
+            let events = responses_event_sequence(&response).unwrap();
+            assert_eq!(events, build_responses_event_sequence(&response).unwrap());
+            assert_eq!(events.first().unwrap()["type"], "response.created");
+            assert_eq!(events.last().unwrap()["type"], format!("response.{status}"));
+            assert_eq!(events.last().unwrap()["response"], response);
+            assert_eq!(events[3]["delta"], text);
+            assert_eq!(events[9]["arguments"], "{\"q\":\"rust\"}");
+        }
+    }
 }

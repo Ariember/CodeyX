@@ -1543,13 +1543,16 @@ impl RouteRequestLogProbe {
             .and_then(|start| {
                 start.checked_add(Duration::from_micros(first_byte.saturating_sub(1)))
             });
-        let mut progress = lock_unpoisoned(&self.shared.live_output);
-        if let Some(sample) = progress.observe(
-            quarters,
-            reported_tokens,
-            observed_at,
-            upstream_first_byte_at,
-        ) {
+        let sample = {
+            let mut progress = lock_unpoisoned(&self.shared.live_output);
+            progress.observe(
+                quarters,
+                reported_tokens,
+                observed_at,
+                upstream_first_byte_at,
+            )
+        };
+        if let Some(sample) = sample {
             registry.update_request_speed(
                 session_id,
                 request_id,

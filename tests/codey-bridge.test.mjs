@@ -121,6 +121,24 @@ test("mutation dispatcher unions subscriptions and tears down only when empty", 
   assert.equal(dispatcher.snapshot().subscriberCount, 0);
 });
 
+test("character data is observed only while requested and delivered only to its subscribers", () => {
+  const runtime = createRuntime();
+  const calls = [];
+  const dispatcher = runtime.window.__codeyMutationDispatcher;
+  const unsubscribeText = dispatcher.subscribe(records => calls.push(["text", ...records]), { characterData: true });
+  assert.equal(dispatcher.snapshot().observerInstalled, true);
+  assert.equal(runtime.observers.at(-1).options.characterData, true);
+  const unsubscribeChildren = dispatcher.subscribe(records => calls.push(["children", ...records]), { childList: true });
+  const text = { type: "characterData" };
+  const children = { type: "childList" };
+  runtime.observers.at(-1).callback([text, children]);
+  assert.deepEqual(calls, [["text", text], ["children", children]]);
+  unsubscribeText();
+  assert.notEqual(runtime.observers.at(-1).options.characterData, true);
+  unsubscribeChildren();
+  assert.equal(dispatcher.snapshot().observerInstalled, false);
+});
+
 test("shared control lookup includes a matching root and its descendants", () => {
   const runtime = createRuntime();
   const child = {};

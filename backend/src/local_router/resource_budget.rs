@@ -53,6 +53,57 @@ impl RetainedMemoryBudget {
     }
 }
 
+/// 不复制或序列化正文，仅估算序列化大小的下界，达到阈值即可停止。
+pub(crate) fn json_value_reaches_serialized_threshold(value: &Value, threshold: usize) -> bool {
+    fn add_raw(bytes: &mut usize, added: usize, threshold: usize) -> bool {
+        *bytes = bytes.saturating_add(added);
+        *bytes >= threshold
+    }
+
+    fn add(value: &Value, bytes: &mut usize, threshold: usize) -> bool {
+        let added = match value {
+            Value::Null | Value::Bool(_) => 4,
+            Value::Number(number) => number.to_string().len(),
+            Value::String(text) => text.len().saturating_add(2),
+            Value::Array(items) => {
+                let structural = 2_usize.saturating_add(items.len().saturating_sub(1));
+                return add_raw(bytes, structural, threshold)
+                    || items.iter().any(|item| add(item, bytes, threshold));
+            }
+            Value::Object(object) => {
+                let structural = 2_usize
+                    .saturating_add(3_usize.saturating_mul(object.len()))
+                    .saturating_add(object.len().saturating_sub(1));
+                if add_raw(bytes, structural, threshold) {
+                    return true;
+                }
+                for (key, value) in object {
+                    if add_raw(bytes, key.len(), threshold) || add(value, bytes, threshold) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+        add_raw(bytes, added, threshold)
+    }
+
+    add(value, &mut 0, threshold)
+}
+
+pub(crate) fn run_json_work<T>(large: bool, work: impl FnOnce() -> T) -> T {
+    // 借用正文，保留取消后的内存预算和 HTTP 回退所有权；单线程运行时不支持 block_in_place。
+    if large
+        && tokio::runtime::Handle::try_current().is_ok_and(|handle| {
+            handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+        })
+    {
+        tokio::task::block_in_place(work)
+    } else {
+        work()
+    }
+}
+
 pub(crate) fn bounded_json_bytes(value: &impl serde::Serialize, limit: usize) -> Result<usize> {
     struct Counter {
         bytes: usize,
@@ -78,6 +129,68 @@ pub(crate) fn bounded_json_bytes(value: &impl serde::Serialize, limit: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_size_estimate_is_a_lower_bound_and_detects_large_values() {
+        for value in [
+            Value::Null,
+            json!(true),
+            json!(false),
+            json!(-12.5),
+            json!("引号\"和换行\n"),
+            json!([]),
+            json!({}),
+            json!({"quoted\"key": [null, false, "text"]}),
+        ] {
+            let actual = serde_json::to_vec(&value).unwrap().len();
+            for threshold in 0..=actual + 1 {
+                if json_value_reaches_serialized_threshold(&value, threshold) {
+                    assert!(actual >= threshold);
+                }
+            }
+        }
+        let overhead = serde_json::to_vec(&json!({"input": ""})).unwrap().len();
+        for offset in [0, 1] {
+            let body = json!({"input": "x".repeat(REQUEST_JSON_OFFLOAD_BYTES - overhead - offset)});
+            assert_eq!(
+                json_value_reaches_serialized_threshold(&body, REQUEST_JSON_OFFLOAD_BYTES),
+                offset == 0,
+            );
+        }
+        let array = Value::Array(vec![Value::Null; REQUEST_JSON_OFFLOAD_BYTES / 5 + 1]);
+        assert!(json_value_reaches_serialized_threshold(
+            &array,
+            REQUEST_JSON_OFFLOAD_BYTES
+        ));
+    }
+
+    #[test]
+    fn json_work_preserves_results_without_a_multithread_runtime() {
+        assert_eq!(run_json_work(true, || 42), 42);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            assert_eq!(run_json_work(true, || 42), 42);
+            assert_eq!(
+                run_json_work(false, || Err::<(), _>("invalid JSON")),
+                Err("invalid JSON")
+            );
+        });
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn large_json_work_releases_the_runtime_worker_and_preserves_borrows() {
+        let mut body = json!({"input": "x".repeat(REQUEST_JSON_OFFLOAD_BYTES)});
+        let serialized = run_json_work(true, || {
+            // Re-entering the runtime is valid only after block_in_place released its worker.
+            tokio::runtime::Handle::current().block_on(async { tokio::task::yield_now().await });
+            body["model"] = json!("test-model");
+            serde_json::to_string(&body).unwrap()
+        });
+        assert_eq!(serde_json::from_str::<Value>(&serialized).unwrap(), body);
+        assert!(run_json_work(true, || serde_json::from_slice::<Value>(b"invalid")).is_err());
+    }
 
     #[test]
     fn retained_budget_is_shared_and_released_on_error_and_drop() {

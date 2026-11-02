@@ -227,6 +227,7 @@
   const mutationBelongsTo = (mutation, subscriber) => {
     const type = mutation?.type;
     if (type === "childList") return subscriber.childList;
+    if (type === "characterData") return subscriber.characterData;
     if (type === "attributes") {
       if (!subscriber.attributes) return false;
       if (subscriber.attributeFilter === null) return true;
@@ -274,10 +275,12 @@
     let attributes = false;
     let attributeOldValue = false;
     let childList = false;
+    let characterData = false;
     let observeAllAttributes = false;
     const attributeFilter = new Set();
     for (const subscriber of mutationSubscribers.values()) {
       childList ||= subscriber.childList;
+      characterData ||= subscriber.characterData;
       attributes ||= subscriber.attributes;
       attributeOldValue ||= subscriber.attributeOldValue;
       if (!subscriber.attributes) continue;
@@ -287,9 +290,10 @@
         subscriber.attributeFilter.forEach((attribute) => attributeFilter.add(attribute));
       }
     }
-    if (!attributes && !childList) return;
+    if (!attributes && !childList && !characterData) return;
 
     const options = { attributes, childList, subtree: true };
+    if (characterData) options.characterData = true;
     if (attributes && attributeOldValue) options.attributeOldValue = true;
     if (attributes && !observeAllAttributes && attributeFilter.size) {
       options.attributeFilter = [...attributeFilter];
@@ -308,6 +312,7 @@
       attributes,
       attributeOldValue: attributes && options.attributeOldValue === true,
       childList: options.childList === true,
+      characterData: options.characterData === true,
       attributeFilter: attributes && Array.isArray(options.attributeFilter)
         ? [...new Set(options.attributeFilter.map(String))]
         : null,

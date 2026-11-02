@@ -292,6 +292,13 @@ impl ConversationStatsRegistry {
         let Some(active) = stats.active_requests.get_mut(request_id) else {
             return;
         };
+        // 采样锁已释放，较早的样本可能晚于下一次采样获得统计锁。
+        if active
+            .recorded_at_unix_ms
+            .is_some_and(|previous| previous > recorded_at_unix_ms)
+        {
+            return;
+        }
         active.streaming = true;
         active.sample =
             (sample.output_tokens.is_finite() && sample.output_tokens > 0.0).then_some(sample);
@@ -785,9 +792,11 @@ mod tests {
         assert_eq!(waiting.speed_state, Some("waiting"));
         assert_eq!(waiting.output_tokens_per_second, None);
         registry.update_request_speed("thread-a", "new", sample(50.0, true), 200);
+        registry.update_request_speed("thread-a", "new", sample(25.0, false), 150);
         registry.update_request_speed("thread-b", "new", sample(900.0, false), 200);
         let active = registry.snapshot_at("thread-a", now).unwrap();
         assert_eq!(active.output_tokens_per_second, Some(50.0));
+        assert_eq!(active.speed_recorded_at_unix_ms, Some(200));
         assert!(active.speed_is_estimate);
         assert_eq!(active.speed_state, Some("streaming"));
         assert_eq!(active.total_tokens, None);

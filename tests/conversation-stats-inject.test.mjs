@@ -401,6 +401,23 @@ const observeAttributeWrites = (env) => {
   return counts;
 };
 
+test("streaming content and visibility changes inside a turn do not rescan the composer", async () => {
+  const env = createEnvironment({ manualTimers: true, statsBySession: { "conversation-1": STATS } });
+  try {
+    env.runTimer(0);
+    await flushTimers(0);
+    const turn = env.document.createElement("div");
+    turn.setAttribute("data-turn-key", "turn-1");
+    env.scope.appendChild(turn);
+    const streamedNode = turn.appendChild(env.document.createElement("span"));
+    streamedNode.querySelector = () => { throw new Error("streamed text must not be searched"); };
+    env.emitMutation([{ type: "childList", target: turn, addedNodes: [streamedNode] }]);
+    turn.setAttribute("aria-hidden", "true");
+    env.emitMutation([{ type: "attributes", target: turn, attributeName: "aria-hidden" }]);
+    assert.equal([...env.timers.values()].some(timer => timer.delay === 120), false);
+  } finally { env.dispose(); }
+});
+
 test("unchanged rescans do not rewrite attributes and changed values update immediately", async () => {
   const env = createEnvironment({ manualTimers: true, statsBySession: { "conversation-1": STATS } });
   try {

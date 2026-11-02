@@ -744,6 +744,20 @@ impl AdaptedResponsesHistory {
         expand: bool,
         previous_history: Option<&Self>,
     ) -> Result<bool> {
+        let large = json_value_reaches_serialized_threshold(body, REQUEST_JSON_OFFLOAD_BYTES)
+            || previous_history.unwrap_or(self).last_bytes >= REQUEST_JSON_OFFLOAD_BYTES;
+        run_json_work(large, || {
+            self.prepare_context_inner(body, native, expand, previous_history)
+        })
+    }
+
+    fn prepare_context_inner(
+        &mut self,
+        body: &mut Value,
+        native: bool,
+        expand: bool,
+        previous_history: Option<&Self>,
+    ) -> Result<bool> {
         self.pending_input = None;
         self.pending_output.clear();
         self.pending_output_overflowed = false;
@@ -843,5 +857,67 @@ impl AdaptedResponsesHistory {
         self.last_bytes = bytes;
         self.budget.resize(bytes)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod history_offload_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn large_history_preserves_continuation_and_failure_state() {
+        let input = "x".repeat(REQUEST_JSON_OFFLOAD_BYTES);
+        let mut history = AdaptedResponsesHistory::default();
+        assert!(!history.prepare(&mut json!({"input": input})).unwrap());
+        history
+            .remember(
+                "resp_codey_large",
+                &[json!({"role": "assistant", "content": "ok"})],
+            )
+            .unwrap();
+        let mut continuation =
+            json!({"previous_response_id": "resp_codey_large", "input": "continue"});
+        assert!(history.prepare(&mut continuation).unwrap());
+        assert!(continuation.get("previous_response_id").is_none());
+        assert_eq!(
+            continuation["input"],
+            json!([input, {"role":"assistant", "content":"ok"}, "continue"])
+        );
+
+        history.clear_pending();
+        let mut missing = json!({"input": input, "previous_response_id": "resp_codey_missing"});
+        let original = missing.clone();
+        assert!(
+            history
+                .prepare(&mut missing)
+                .unwrap_err()
+                .is::<MissingResponseHistory>()
+        );
+        assert_eq!(missing, original);
+        assert!(history.pending_input.is_none());
+
+        let mut exhausted = AdaptedResponsesHistory {
+            last_bytes: RETAINED_RESPONSE_BUDGET_BYTES,
+            ..Default::default()
+        };
+        let mut body = json!({"input": input});
+        let original = body.clone();
+        assert!(exhausted.prepare(&mut body).is_err());
+        assert_eq!(body, original);
+        assert!(exhausted.pending_input.is_none());
+    }
+
+    #[tokio::test]
+    async fn large_native_history_is_safe_on_a_single_thread_runtime() {
+        let mut previous = AdaptedResponsesHistory::default();
+        let mut original = json!({"input": "x".repeat(REQUEST_JSON_OFFLOAD_BYTES)});
+        assert!(!previous.stage_native(&mut original, None).unwrap());
+        previous.remember("resp_native", &[]).unwrap();
+        let mut current = AdaptedResponsesHistory::default();
+        let mut body = json!({"input": "next", "previous_response_id": "resp_native"});
+        let unchanged = body.clone();
+        assert!(!current.stage_native(&mut body, Some(&previous)).unwrap());
+        assert_eq!(body, unchanged);
+        assert_eq!(current.pending_input.as_ref().unwrap().len(), 2);
     }
 }

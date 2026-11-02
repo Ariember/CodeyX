@@ -57,6 +57,8 @@ const PET_CONTROL_SHIELD_SCRIPT: &str =
     include_str!("../../dist-overlay/inject/pet-control-shield.js");
 const SECURITY_WARNING_SHIELD_SCRIPT: &str =
     include_str!("../../dist-overlay/inject/security-warning-shield.js");
+const QUOTA_NOTICE_DISMISS_SCRIPT: &str =
+    include_str!("../../dist-overlay/inject/quota-notice-dismiss.js");
 const QUOTA_UNLOCK_SCRIPT: &str = include_str!("../../dist-overlay/inject/quota-unlock.js");
 pub(crate) const SETTINGS_OVERLAY_SCRIPT: &str =
     include_str!("../../dist-overlay/codey-overlay.js");
@@ -357,6 +359,17 @@ pub fn prepare_injection_scripts(
             Feature,
         ),
         (
+            "quota-notice-dismiss",
+            "额度提示关闭",
+            QUOTA_NOTICE_DISMISS_SCRIPT,
+            r#"window.__codeyQuotaNoticeDismissInstalled === true
+              && typeof window.__codeyQuotaNoticeDismiss?.scan === "function"
+              && typeof window.__codeyQuotaNoticeDismiss?.dismiss === "function"
+              ? "额度提示关闭按钮已就绪" : """#
+                .to_string(),
+            Feature,
+        ),
+        (
             "settings-overlay-loader",
             "配置面板加载器",
             lazy_settings_overlay_loader_script(),
@@ -466,6 +479,7 @@ pub fn prepare_injection_scripts(
             + RENDERER_INJECT_SCRIPT.len()
             + PET_CONTROL_SHIELD_SCRIPT.len()
             + SECURITY_WARNING_SHIELD_SCRIPT.len()
+            + QUOTA_NOTICE_DISMISS_SCRIPT.len()
             + QUOTA_UNLOCK_SCRIPT.len()
             + PLUGIN_MARKETPLACE_FIX_SCRIPT.len()
             + PROMPT_OPTIMIZE_SCRIPT.len()
@@ -3086,7 +3100,14 @@ const run = async (patch) => {
         assert!(prepared.scripts[1].contains("window.userScriptRan = true;"));
         assert!(prepared.scripts[1].contains(r#"status = "executed""#));
         assert!(prepared.scripts[1].contains("用户脚本 1 injection failed"));
-        assert_eq!(prepared.descriptors.len(), 14);
+        assert_eq!(prepared.descriptors.len(), 15);
+        assert!(core.contains("__codeyQuotaNoticeDismiss"));
+        assert!(
+            prepared
+                .descriptors
+                .iter()
+                .any(|descriptor| descriptor.id == "quota-notice-dismiss")
+        );
         assert!(core.contains("__codeyConversationStats"));
         assert!(
             prepared
@@ -3111,9 +3132,9 @@ const run = async (patch) => {
             InjectionScriptVisibility::Internal
         );
         assert_eq!(prepared.descriptors[1].id, "native-runtime");
-        assert_eq!(prepared.descriptors[6].id, "renderer-controls");
+        assert_eq!(prepared.descriptors[7].id, "renderer-controls");
         assert_eq!(
-            prepared.descriptors[6].visibility,
+            prepared.descriptors[7].visibility,
             InjectionScriptVisibility::Internal
         );
         assert!(

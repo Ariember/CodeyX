@@ -630,8 +630,11 @@ impl WebSocketResponsesDownstream {
             "type".to_string(),
             Value::String("response.create".to_string()),
         );
-        let message =
-            serde_json::to_string(body).context("序列化 Responses WebSocket 上游请求失败")?;
+        let message = run_json_work(
+            json_value_reaches_serialized_threshold(body, REQUEST_JSON_OFFLOAD_BYTES),
+            || serde_json::to_string(body),
+        )
+        .context("序列化 Responses WebSocket 上游请求失败")?;
 
         // Once send is attempted the request may have reached the upstream.
         // Any later failure is surfaced to the caller and is never replayed
@@ -1447,7 +1450,9 @@ pub(crate) async fn proxy_native_response_to_websocket(
         }
         return downstream.finish_event_stream().await;
     }
-    match serde_json::from_slice::<Value>(&body) {
+    match run_json_work(body.len() >= REQUEST_JSON_OFFLOAD_BYTES, || {
+        serde_json::from_slice::<Value>(&body)
+    }) {
         Ok(mut value) => {
             if let Some(fix) = response_fix.as_ref() {
                 fix.apply(&mut value);
