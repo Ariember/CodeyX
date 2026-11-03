@@ -1057,7 +1057,7 @@ const createStartupUpdateFixture = (bridge) => {
   };
 };
 
-for (const type of ["pointerenter", "focus"]) {
+for (const type of ["pointerenter", "pointerdown", "focus"]) {
   test(`passively preloads settings on ${type} and keeps clicks working`, async () => {
     const fixture = createStartupUpdateFixture(async () => ({ status: "ok" }));
     let loads = 0;
@@ -1074,6 +1074,7 @@ for (const type of ["pointerenter", "focus"]) {
     const button = fixture.document.getElementById("codey-settings-button");
     assert.equal(loads, 0, "startup does not preload settings");
     button.dispatchEvent({ type });
+    if (type === "pointerenter") fixture.activeTimers().find(timer => timer.delay === 120).callback();
     await new Promise(setImmediate);
     assert.equal(loads, 1);
     assert.equal(toggles, 0, "preloading does not open settings");
@@ -1101,6 +1102,27 @@ test("settings preloading ignores missing and non-lazy loaders", () => {
   assert.deepEqual(fixture.alerts, []);
 });
 
+test("a drive-by hover cancels settings loading and a press cancels the pending dwell", async () => {
+  const fixture = createStartupUpdateFixture(async () => ({ status: "ok" }));
+  const button = fixture.document.getElementById("codey-settings-button");
+  let loads = 0;
+  fixture.window.__codeySettingsOverlay = {
+    __codeyLazyLoader: true,
+    load() { loads += 1; },
+  };
+  button.dispatchEvent({ type: "pointerenter" });
+  const first = fixture.activeTimers().find(timer => timer.delay === 120);
+  button.dispatchEvent({ type: "pointerleave" });
+  assert.equal(first.cleared, true);
+  assert.equal(loads, 0);
+  button.dispatchEvent({ type: "pointerenter" });
+  const second = fixture.activeTimers().find(timer => timer.delay === 120);
+  button.dispatchEvent({ type: "pointerdown" });
+  await new Promise(setImmediate);
+  assert.equal(second.cleared, true);
+  assert.equal(loads, 1);
+});
+
 for (const synchronous of [false, true]) {
   test(`settings preload ${synchronous ? "throw" : "rejection"} stays passive and preserves click`, async () => {
     const fixture = createStartupUpdateFixture(async () => ({ status: "ok" }));
@@ -1115,6 +1137,7 @@ for (const synchronous of [false, true]) {
     };
     const button = fixture.document.getElementById("codey-settings-button");
     button.dispatchEvent({ type: "pointerenter" });
+    fixture.activeTimers().find(timer => timer.delay === 120).callback();
     await new Promise(setImmediate);
     assert.deepEqual(fixture.alerts, []);
     assert.equal(toggles, 0);

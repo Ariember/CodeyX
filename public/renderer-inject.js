@@ -1085,7 +1085,17 @@
     }
   };
 
+  let settingsPreloadTimer = 0;
+  const cancelSettingsPreload = () => {
+    window.clearTimeout(settingsPreloadTimer);
+    settingsPreloadTimer = 0;
+  };
+  const scheduleSettingsPreload = () => {
+    cancelSettingsPreload();
+    settingsPreloadTimer = window.setTimeout(preloadSettings, 120);
+  };
   const preloadSettings = async () => {
+    cancelSettingsPreload();
     const overlay = window.__codeySettingsOverlay;
     if (runtimeHealthState === "unavailable"
       || !overlay?.__codeyLazyLoader
@@ -1303,7 +1313,9 @@
       button.setAttribute("aria-label", "打开 CodeyX 配置");
       button.innerHTML = `${settingsIcon}<span class="codey-runtime-badge" aria-hidden="true">!</span><span class="codey-settings-label">CodeyX</span>`;
       button.title = "打开 CodeyX 配置";
-      button.addEventListener("pointerenter", preloadSettings, { passive: true });
+      button.addEventListener("pointerenter", scheduleSettingsPreload, { passive: true });
+      button.addEventListener("pointerleave", cancelSettingsPreload, { passive: true });
+      button.addEventListener("pointerdown", preloadSettings, { passive: true });
       button.addEventListener("focus", preloadSettings);
       button.addEventListener("click", (event) => {
         event.preventDefault();
