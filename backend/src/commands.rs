@@ -87,7 +87,7 @@ use wechat_claw::{
     WechatClawLoginState, WechatClawSessionGuard, WechatClawSyncHandle,
     pause_wechat_claw_notification_channel, poll_wechat_claw_login,
     refresh_wechat_claw_channel_context, start_wechat_claw_login, stop_wechat_claw_service,
-    sync_wechat_claw_service, wechat_claw_login_http_client,
+    sync_wechat_claw_service, wechat_claw_login_http_client_builder,
     wechat_claw_notification_cooldown_remaining,
 };
 
@@ -135,7 +135,8 @@ pub struct AppState {
     /// changes arrive on plugin threads, which cannot see that runtime via
     /// `Handle::try_current`.
     runtime_handle: Option<tokio::runtime::Handle>,
-    pub http_client: reqwest::Client,
+    /// 官方账号授权、更新检查与模型拉取共用的客户端，随系统代理变化重建。
+    pub http_client: crate::system_proxy_client::SystemProxyClient,
     /// Official token refresh clients keyed by account proxy URL.
     official_proxied_clients: BlockingMutex<HashMap<String, reqwest::Client>>,
     #[cfg(test)]
@@ -143,7 +144,8 @@ pub struct AppState {
     /// Built on first use: the login/sync client is only needed for WeChat
     /// ClawBot flows, and constructing a reqwest client loads the system root
     /// certificates, which is measurable on the startup path.
-    wechat_claw_login_http_client: std::sync::OnceLock<reqwest::Client>,
+    wechat_claw_login_http_client:
+        std::sync::OnceLock<crate::system_proxy_client::SystemProxyClient>,
     /// Official-account resolution started before the update check so the two
     /// startup waits overlap.
     official_account_probe_prewarm: Mutex<Option<OfficialAccountProbePrewarm>>,
@@ -276,11 +278,12 @@ impl Default for AppState {
             plugin_route_reload_lock: Mutex::new(()),
             model_delivery_lock: Mutex::new(()),
             runtime_handle: tokio::runtime::Handle::try_current().ok(),
-            http_client: reqwest::Client::builder()
-                .user_agent(format!("Codey/{}", env!("CARGO_PKG_VERSION")))
-                .connect_timeout(Duration::from_secs(5))
-                .build()
-                .expect("shared Codey HTTP client should be constructible"),
+            http_client: crate::system_proxy_client::SystemProxyClient::new_blocking(|| {
+                reqwest::Client::builder()
+                    .user_agent(format!("Codey/{}", env!("CARGO_PKG_VERSION")))
+                    .connect_timeout(Duration::from_secs(5))
+            })
+            .expect("shared Codey HTTP client should be constructible"),
             official_proxied_clients: BlockingMutex::new(HashMap::new()),
             #[cfg(test)]
             webhook_http_client_override: None,
@@ -399,9 +402,17 @@ impl AppState {
         Some(prewarm.task)
     }
 
-    pub(crate) fn wechat_claw_login_http_client(&self) -> &reqwest::Client {
+    /// iLink 地址随渠道变化，按任意主机判定系统代理是否变化。
+    pub(crate) async fn wechat_claw_login_http_client(&self) -> reqwest::Client {
         self.wechat_claw_login_http_client
-            .get_or_init(wechat_claw_login_http_client)
+            .get_or_init(|| {
+                crate::system_proxy_client::SystemProxyClient::new_blocking(
+                    wechat_claw_login_http_client_builder,
+                )
+                .expect("create WeChat ClawBot login HTTP client")
+            })
+            .current_for_any_host()
+            .await
     }
 
     pub fn request_shutdown(&self) {

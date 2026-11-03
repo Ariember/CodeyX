@@ -741,18 +741,20 @@ pub(super) async fn test_notification_channel(
         .channels
         .pop()
         .expect("notification test draft must contain one channel");
-    let client = current_notification_http_client(state)?;
+    let client = current_notification_http_client(state).await?;
     let dispatcher = NotificationDispatcher::with_client(client, channel);
     dispatcher.test().await.map_err(|error| error.to_string())
 }
 
-fn current_notification_http_client(_state: &AppState) -> Result<reqwest::Client, String> {
+async fn current_notification_http_client(_state: &AppState) -> Result<reqwest::Client, String> {
     #[cfg(test)]
     if let Some(client) = &_state.webhook_http_client_override {
         return Ok(client.clone());
     }
 
-    crate::notifications::shared_notification_http_client().map_err(|error| error.to_string())
+    crate::notifications::shared_notification_http_client()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 fn webhook_session_configuration(
@@ -927,8 +929,9 @@ async fn dispatch_webhook_channels(
     if deliveries.is_empty() {
         return Ok(());
     }
-    let client =
-        current_notification_http_client(state).map_err(|detail| WebhookDispatchError {
+    let client = current_notification_http_client(state)
+        .await
+        .map_err(|detail| WebhookDispatchError {
             detail: format!("创建通知网络客户端失败：{detail}"),
             settle_delivery: false,
         })?;

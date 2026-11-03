@@ -320,6 +320,8 @@ async fn fetch_github_update(state: &AppState, releases_url: &str) -> Result<Upd
         for page in 1..=MAX_RELEASE_PAGES {
             let response = state
                 .http_client
+                .current(releases_url)
+                .await
                 .get(releases_url)
                 .query(&[("per_page", RELEASES_PER_PAGE), ("page", page)])
                 .header(
@@ -543,7 +545,7 @@ async fn download_update_candidate_with_mode(
         .ok_or_else(|| "没有适用于当前系统的可安装更新包".to_string())?;
     let download_source = state.config.read().await.codey_update_download_source;
     let file_path = download_update_asset(
-        &state.http_client,
+        &state.http_client.current(&asset.url).await,
         &state.store,
         &candidate.check.latest_version,
         asset,

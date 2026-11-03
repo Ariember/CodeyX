@@ -359,7 +359,7 @@ pub(crate) async fn fetch_official_route_models(
             .build()
             .map_err(|_| "创建官方模型请求客户端失败".to_string())?
     } else {
-        state.http_client.clone()
+        state.http_client.current(&endpoint).await
     };
     let mut request = client
         .get(endpoint)

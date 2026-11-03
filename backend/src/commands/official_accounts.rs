@@ -196,9 +196,14 @@ pub(super) async fn start_official_account_login(state: &Arc<AppState>) -> Resul
     }
     // Give the aborted listener a moment to release the callback port.
     tokio::task::yield_now().await;
-    let session = start_login(state.http_client.clone())
-        .await
-        .map_err(|error| format!("{error:#}"))?;
+    let session = start_login(
+        state
+            .http_client
+            .current(crate::official_accounts::OAUTH_TOKEN_URL)
+            .await,
+    )
+    .await
+    .map_err(|error| format!("{error:#}"))?;
     let auth_url = session.auth_url.clone();
     let login_id = uuid::Uuid::new_v4().to_string();
     state
@@ -463,7 +468,10 @@ pub(super) async fn import_official_account_credential(
     credential: String,
 ) -> Result<Value, String> {
     let record = crate::official_accounts::official_account_from_manual_input(
-        &state.http_client,
+        &state
+            .http_client
+            .current(crate::official_accounts::OAUTH_TOKEN_URL)
+            .await,
         &credential,
     )
     .await
@@ -542,7 +550,10 @@ pub(super) async fn refresh_official_account_tokens(
             let expected = record.clone();
             let proxy = super::official_account_usage_proxy(state, account_id).await?;
             match refresh_if_stale_cached(
-                &state.http_client,
+                &state
+                    .http_client
+                    .current(crate::official_accounts::OAUTH_TOKEN_URL)
+                    .await,
                 &mut record,
                 proxy.as_deref(),
                 Some(&state.official_proxied_clients),
@@ -612,7 +623,10 @@ pub(super) async fn refresh_official_account_tokens(
     // 在线路重算后自动回落到 Codex 平面。
     if !record.invalid() && record.siwc.is_some() {
         match refresh_siwc_if_stale_with_proxy(
-            &state.http_client,
+            &state
+                .http_client
+                .current(crate::official_accounts::OAUTH_TOKEN_URL)
+                .await,
             &store,
             account_id,
             Some(&state.official_proxied_clients),
@@ -816,7 +830,10 @@ async fn official_account_client(
 ) -> Result<reqwest::Client, String> {
     let proxy = super::official_account_usage_proxy(state, account_id).await?;
     let client = crate::official_accounts::official_http_client(
-        &state.http_client,
+        &state
+            .http_client
+            .current(crate::official_accounts::OAUTH_TOKEN_URL)
+            .await,
         Some(&state.official_proxied_clients),
         proxy.as_deref(),
     )

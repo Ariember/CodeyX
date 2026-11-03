@@ -214,7 +214,7 @@ pub(super) async fn invoke(
             })?;
         let inputs =
             conversation_git::analysis_inputs(&snapshot.diff).map_err(|error| error.to_string())?;
-        let client = prompt_optimization::optimizer_client(true)?;
+        let client = &prompt_optimization::optimizer_client(true, &request.base_url).await?;
         let mut messages = analyze_chunks(inputs, |input| {
             let request = &request;
             async move {

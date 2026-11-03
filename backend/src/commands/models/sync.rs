@@ -537,7 +537,10 @@ async fn fetch_provider_models_with_proxy(
     })
     .await
     .map_err(|error| anyhow::anyhow!("解析模型源 API 配置任务异常退出：{error}"))??;
-    provider_models::fetch_with_proxy(&fetch_profile, provider_models::http_client(), proxy).await
+    let client = provider_models::http_client()
+        .current(&fetch_profile.normalized_base_url())
+        .await;
+    provider_models::fetch_with_proxy(&fetch_profile, &client, proxy).await
 }
 
 #[cfg(test)]
