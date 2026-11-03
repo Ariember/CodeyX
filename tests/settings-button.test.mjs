@@ -581,6 +581,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   todayResetAt.setHours(23, 45, 0, 0);
   const tomorrowResetAt = new Date(todayResetAt);
   tomorrowResetAt.setDate(todayResetAt.getDate() + 1);
+  const creditExpiresAt = Math.floor(Date.now() / 1000) + 6 * 3600;
   let accountUsageResult = {
     status: "ok",
     planType: "pro",
@@ -600,6 +601,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
       unlimited: false,
       balance: "42",
     },
+    resetCredits: { availableCount: 3, nextExpiresAt: creditExpiresAt + 24 * 3600 },
   };
   let accountUsageCalls = 0;
   let appServerUsageCalls = 0;
@@ -617,6 +619,16 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
         balance: "77",
       },
       planType: "plus",
+    },
+    rateLimitResetCredits: {
+      availableCount: 2,
+      credits: [
+        { status: "available", expiresAt: creditExpiresAt },
+        { status: "redeemed", expiresAt: creditExpiresAt - 60 },
+        { status: "unknown", expiresAt: creditExpiresAt - 120 },
+        { status: "available", expiresAt: Math.floor(Date.now() / 1000) - 60 },
+        { status: "available", expiresAt: "invalid" },
+      ],
     },
     rateLimitsByLimitId: {
       codex_bengalfox: {
@@ -640,6 +652,8 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
       if (path === "/api/store_official_account_usage") {
         assert.equal(args.authGeneration, 1);
         assert.equal(args.snapshot.primary.usedPercent, 20);
+        assert.equal(args.snapshot.resetCredits.availableCount, 2);
+        assert.equal(args.snapshot.resetCredits.nextExpiresAt, creditExpiresAt);
         assert.ok(args.snapshot.fetchedAt > 0);
         return { status: "ok" };
       }
@@ -732,6 +746,8 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   assert.match(details.innerHTML, /5 小时额度[\s\S]*?剩余[\s\S]*?85%[\s\S]*?今天 23:45 重置/);
   assert.match(details.innerHTML, /每周额度[\s\S]*?剩余[\s\S]*?60%[\s\S]*?明天 23:45 重置/);
   assert.match(details.innerHTML, /Credits 余额[\s\S]*?42/);
+  assert.match(details.innerHTML, /剩余重置次数[\s\S]*?3 次[\s\S]*?过期/);
+  assert.doesNotMatch(details.innerHTML, /data-expiring/);
   assert.match(details.innerHTML, /更新于 \d{2}:\d{2}/);
   assert.doesNotMatch(details.innerHTML, /class="codey-usage-pace"|codey-usage-legend|--codey-usage-time-left/);
   assert.equal(usage.dataset.state, "ready");
@@ -779,11 +795,13 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
     ...accountUsageResult,
     primary: accountUsageResult.secondary,
     secondary: null,
+    resetCredits: { availableCount: 0, nextExpiresAt: creditExpiresAt },
   };
   await window.__codeyRefreshAccountUsage();
   assert.equal(usage.dataset.windowCount, "1");
   assert.match(summary.innerHTML, /每周/);
   assert.doesNotMatch(summary.innerHTML, /data-window="five-hour"/);
+  assert.doesNotMatch(details.innerHTML, /剩余重置次数|data-expiring/);
 
   accountUsageResult = { status: "error", message: "官方额度接口返回 401", authGeneration: 1 };
   appServerUsageResult.rateLimits.primary.resetsAt = Math.floor(Date.now() / 1000) + 29.5 * 60 * 60;
@@ -796,6 +814,9 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   assert.doesNotMatch(usage.getAttribute("aria-label"), /5 小时额度/);
   assert.match(usage.getAttribute("aria-label"), /1 天 5 小时后重置/);
   assert.match(details.innerHTML, /Credits 余额[\s\S]*?77/);
+  assert.match(details.innerHTML, /data-expiring="true"[\s\S]*?剩余重置次数[\s\S]*?2 次[\s\S]*?过期/);
+  assert.match(usage.getAttribute("aria-label"), /重置次数即将过期/);
+  assert.match(announcer.textContent, /重置次数即将过期/);
   assert.match(details.innerHTML, /class="codey-usage-plan">Plus<\/span>/);
 
   // 后台与 Codex 都读取失败时保留上次结果并标记为过期，侧边栏重扫也不能清掉标记。
@@ -806,7 +827,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   window.__codeyRendererScan();
   assert.equal(appServerUsageCalls, 2);
   assert.equal(usage.dataset.state, "stale");
-  assert.match(summary.innerHTML, /data-tone="warning">\s*<span class="codey-usage-status">未能刷新 · 截至 \d{2}:\d{2}<\/span>/);
+  assert.match(summary.innerHTML, /data-tone="warning">\s*<span class="codey-usage-status">未能刷新 · 截至 \d{2}:\d{2} · 重置次数即将过期<\/span>/);
   assert.match(summary.innerHTML, /每周[\s\S]*?80%/);
   assert.match(details.innerHTML, /未能刷新 · 截至 \d{2}:\d{2}/);
   assert.match(usage.getAttribute("aria-label"), /暂未能刷新，显示上次结果/);

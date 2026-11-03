@@ -188,6 +188,9 @@
       #${accountUsageId} [data-pace="empty"] .codey-usage-pace-note::before { background: var(--codey-usage-danger); }
       #${accountUsageId} .codey-usage-credits { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--codey-usage-line); color: var(--codey-usage-ink-2); }
       #${accountUsageId} .codey-usage-credits-value { color: var(--codey-usage-ink); font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+      #${accountUsageId} .codey-usage-reset-credits { flex-wrap: wrap; }
+      #${accountUsageId} .codey-usage-credit-expiry { flex-basis: 100%; font-size: 11px; }
+      #${accountUsageId} [data-expiring="true"] .codey-usage-credit-expiry { color: var(--codey-usage-danger); }
       #${accountUsageId} .codey-usage-pop-foot { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 12px; color: var(--codey-usage-ink-3); font-size: 11px; line-height: 15px; }
       #${accountUsageId} .codey-usage-updated, #${accountUsageId} .codey-usage-stale-note { overflow: hidden; margin-inline-start: auto; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
       #${accountUsageId} .codey-usage-stale-note { display: none; color: var(--codey-usage-warning); }
@@ -484,6 +487,24 @@
     };
   };
 
+  const normalizeResetCreditsSummary = (summary) => {
+    if (!summary || typeof summary !== "object") return null;
+    const count = Number(summary.availableCount ?? summary.available_count);
+    if (!Number.isSafeInteger(count) || count < 0) return null;
+    let nextExpiresAt;
+    for (const row of Array.isArray(summary.credits) ? summary.credits : []) {
+      if (row?.status === "redeemed" || row?.status === "unknown") continue;
+      const value = row?.expiresAt ?? row?.expires_at;
+      const raw = Number(value);
+      const seconds = Number.isFinite(raw) ? (raw > 10_000_000_000 ? raw / 1000 : raw)
+        : typeof value === "string" ? Date.parse(value) / 1000 : NaN;
+      if (!Number.isFinite(seconds) || seconds * 1000 <= Date.now()) continue;
+      const expires = Math.round(seconds);
+      nextExpiresAt = nextExpiresAt === undefined ? expires : Math.min(nextExpiresAt, expires);
+    }
+    return { availableCount: count, ...(nextExpiresAt ? { nextExpiresAt } : {}) };
+  };
+
   const normalizeAppServerAccountUsage = (response) => {
     const unavailable = { status: "unavailable", code: "codex_usage_incompatible", message: "当前 Codex 暂时无法提供额度信息" };
     const payload = response?.result && typeof response.result === "object"
@@ -523,12 +544,17 @@
       .map((bucket) => bucket.planType)
       .find((value) => typeof value === "string" && value.trim())
       || (typeof payload.planType === "string" ? payload.planType : undefined);
+    const resetCredits = normalizeResetCreditsSummary(
+      payload.rateLimitResetCredits ?? payload.rate_limit_reset_credits
+        ?? payload.rateLimits?.rateLimitResetCredits ?? payload.rateLimits?.rate_limit_reset_credits,
+    );
     return {
       status: "ok",
       ...(planType ? { planType } : {}),
       ...(primary ? { primary } : {}),
       ...(secondary ? { secondary } : {}),
       ...(credits ? { credits } : {}),
+      ...(resetCredits ? { resetCredits } : {}),
       fetchedAt: Math.floor(Date.now() / 1000),
     };
   };
@@ -588,7 +614,7 @@
     return remainingMinutes > 0 ? `${accountUsageDurationLabel(remainingMinutes)}后重置` : "即将重置";
   };
 
-  const accountUsageResetTimeLabel = (resetsAt) => {
+  const accountUsageResetTimeLabel = (resetsAt, suffix = "重置") => {
     const timestamp = Number(resetsAt);
     if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
     const resetAt = new Date(timestamp * 1000);
@@ -612,9 +638,9 @@
       minute: "2-digit",
       hour12: false,
     });
-    if (dayOffset === 0) return `今天 ${time} 重置`;
-    if (dayOffset === 1) return `明天 ${time} 重置`;
-    return `${resetAt.getMonth() + 1}月${resetAt.getDate()}日 ${time} 重置`;
+    if (dayOffset === 0) return `今天 ${time} ${suffix}`;
+    if (dayOffset === 1) return `明天 ${time} ${suffix}`;
+    return `${resetAt.getMonth() + 1}月${resetAt.getDate()}日 ${time} ${suffix}`;
   };
 
   // Codex 把侧边栏底部内容收进贴底的绝对定位 footer 容器后，容器内容由 Codex
@@ -800,6 +826,21 @@
     return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
   };
 
+  const accountUsageResetExpiring = (credits) => {
+    const remaining = Number(credits?.nextExpiresAt) * 1000 - Date.now();
+    return Number(credits?.availableCount) > 0 && remaining > 0 && remaining <= 12 * 60 * 60 * 1000;
+  };
+
+  const accountUsageResetCreditsMarkup = (credits) => {
+    const count = Number(credits?.availableCount);
+    if (!Number.isSafeInteger(count) || count <= 0) return "";
+    const expiry = accountUsageResetTimeLabel(credits.nextExpiresAt, "过期");
+    return `<div class="codey-usage-credits codey-usage-reset-credits"${accountUsageResetExpiring(credits) ? ' data-expiring="true"' : ""}>
+      <span>剩余重置次数</span><span class="codey-usage-credits-value">${count} 次</span>
+      ${expiry ? `<span class="codey-usage-credit-expiry">最近 ${escapeAccountUsageText(expiry)}</span>` : ""}
+    </div>`;
+  };
+
   const accountUsageDetailsMarkup = (result, models) => {
     const plan = accountUsagePlanLabel(result?.planType);
     const credits = accountUsageCreditsLabel(result?.credits);
@@ -811,6 +852,7 @@
       </div>
       ${models.map(accountUsageDetailWindow).join("")}
       ${credits ? `<div class="codey-usage-credits"><span>Credits 余额</span><span class="codey-usage-credits-value">${escapeAccountUsageText(credits)}</span></div>` : ""}
+      ${accountUsageResetCreditsMarkup(result?.resetCredits)}
       <div class="codey-usage-pop-foot">
         ${fetched ? `<span class="codey-usage-updated">更新于 ${fetched}</span>` : ""}
         <span class="codey-usage-stale-note">${fetched ? `未能刷新 · 截至 ${fetched}` : "未能刷新，显示上次结果"}</span>
@@ -960,7 +1002,9 @@
     usage.dataset.state = accountUsageStale ? "stale" : "ready";
     usage.dataset.windowCount = String(summaryModels.length);
     const overview = accountUsageOverview(summaryModels, accountUsageStale, result.fetchedAt);
-    const aria = summaryModels.map((model) => model.aria).join("；");
+    if (accountUsageResetExpiring(result.resetCredits)) overview.text += " · 重置次数即将过期";
+    const aria = summaryModels.map((model) => model.aria).join("；")
+      + (accountUsageStale && accountUsageResetExpiring(result.resetCredits) ? "；重置次数即将过期" : "");
     usage.setAttribute("aria-label", accountUsageStale ? `${aria}；暂未能刷新，显示上次结果` : `${overview.text}；${aria}`);
     usage.setAttribute("aria-describedby", accountUsageDetailsId);
     writeAccountUsage(
