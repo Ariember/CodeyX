@@ -41,6 +41,106 @@ function discoveryFixture() {
   return { ...runtime, module: { resolve }, manager };
 }
 
+function moduleClientFixture({ registry = false, hostId = "local" } = {}) {
+  class Client {
+    hostId = hostId;
+    enqueueRequest(method, params) { return { method, params }; }
+    createRequest() { assert.fail("discovery must not create requests"); }
+    onResult() {}
+  }
+  const manager = {
+    requestClient: new Client(),
+    getHostId: () => hostId,
+    sendRequest() { assert.fail("discovery must not send requests"); },
+  };
+  const family = { kind: "signal-family" };
+  const scope = Object.assign(function scope() {}, {
+    node: { familyBindings: new Map([[family, new Map([["local", {}]])]]) },
+    get(_key, requestedHost) { return requestedHost === "local" ? manager : null; },
+    query: null, set() {}, watch() {}, when() {},
+  });
+  const module = { container: { scope } };
+  if (registry) {
+    delete scope.node;
+    module.Registry = class {
+      getAll() { return this.scope.get("managers"); }
+      getForHostId(host) { return this.scope.get("manager", host); }
+    };
+  }
+  const runtime = fixture({
+    HTMLElement: class {},
+    document: {
+      scripts: [{ src: "app://-/assets/app-initial-startup.js" }],
+      querySelectorAll: () => [], querySelector: () => null,
+    },
+  });
+  runtime.window.__codeyImportCodexAsset = async () => module;
+  runtime.window.fetch = () => assert.fail("local module discovery must not fetch the network");
+  return { ...runtime, module, scope, manager, Client };
+}
+
+for (const registry of [false, true]) {
+  test(`model routing finds the ${registry ? "exported registry" : "cached signal"} before React mounts`, async () => {
+    const runtime = moduleClientFixture({ registry });
+    runtime.load();
+    assert.equal(await runtime.window.__codeyLoadCodexRequestClient(), runtime.manager.requestClient);
+    assert.equal(runtime.window.__codeyPageCapabilities.modelRouting.status, "available");
+  });
+}
+
+test("a module-discovered client installs the real gate before the page mounts", async () => {
+  const runtime = moduleClientFixture();
+  runtime.load();
+  vm.runInNewContext(readFileSync(new URL("../public/model-request-gate.js", import.meta.url), "utf8"), { window: runtime.window });
+  const gate = runtime.window.__codeyCreateModelRequestGate({
+    rewriteRequest: (method, params) => ({ method, params: { ...params, modelProvider: "codey_router" } }),
+  });
+  assert.equal(await gate.ensure(), true);
+  assert.equal(runtime.manager.requestClient.enqueueRequest("thread/start", {}).params.modelProvider, "codey_router");
+  const remote = new runtime.Client();
+  remote.hostId = "ssh";
+  assert.equal(remote.enqueueRequest("thread/start", {}).params.modelProvider, undefined);
+  gate.dispose();
+});
+
+test("module discovery retries when initialization publishes its scope later", async () => {
+  const runtime = moduleClientFixture();
+  runtime.module.container.scope = null;
+  runtime.load();
+  await assert.rejects(runtime.window.__codeyLoadCodexRequestClient(), /模型请求校验/);
+  runtime.module.container.scope = runtime.scope;
+  assert.equal(await runtime.window.__codeyLoadCodexRequestClient(), runtime.manager.requestClient);
+});
+
+for (const invalid of ["remote", "incomplete", "ambiguous", "getter"]) {
+  test(`module discovery rejects ${invalid} candidates without reporting readiness`, async () => {
+    const runtime = moduleClientFixture({ hostId: invalid === "remote" ? "ssh" : "local" });
+    let getterCalls = 0;
+    if (invalid === "incomplete") runtime.Client.prototype.onResult = undefined;
+    if (invalid === "ambiguous") runtime.module.other = moduleClientFixture().module.container;
+    if (invalid === "getter") Object.defineProperty(runtime.module.container, "scope", {
+      get() { getterCalls += 1; return runtime.scope; },
+    });
+    runtime.load();
+    await assert.rejects(runtime.window.__codeyLoadCodexRequestClient(), /模型请求校验/);
+    assert.equal(runtime.window.__codeyPageCapabilities.modelRouting.status, "unavailable");
+    assert.equal(getterCalls, 0, "discovery must not invoke unknown accessors");
+  });
+}
+
+test("a late module discovery cannot republish a disposed adapter's client", async () => {
+  const runtime = moduleClientFixture();
+  let finish;
+  runtime.window.__codeyImportCodexAsset = () => new Promise(resolve => { finish = resolve; });
+  runtime.load();
+  const pending = runtime.window.__codeyLoadCodexRequestClient();
+  await settle();
+  runtime.window.__codeyNativeRuntime.dispose();
+  finish(runtime.module);
+  await assert.rejects(pending, { code: "codey_capability_unavailable" });
+  assert.equal(runtime.window.__codeyCodexSessionController, undefined);
+});
+
 test("a timed-out capability probe cannot replace a newer cached manager", async () => {
   const runtime = discoveryFixture();
   let finish;

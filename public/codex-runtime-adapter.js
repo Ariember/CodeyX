@@ -1,7 +1,7 @@
 // Codex's private desktop interfaces live behind this adapter. Installing it
 // does not mount controls, observe the DOM, or start background polling.
 (() => {
-  const version = 4;
+  const version = 5;
   const previous = window.__codeyNativeRuntime;
   if (previous?.version === version && previous.isActive?.()) return;
   previous?.dispose?.();
@@ -296,6 +296,26 @@
     return matches.size === 1 ? [...matches][0] : null;
   };
 
+  const appServerManagerFromModule = (module) => {
+    const registry = appServerManagerRegistryResolverFromModule(module);
+    const managers = new Set();
+    // 页面可能仍在等待网络；模块导出的 scope 先于 React 挂载可用。
+    for (const value of new Set(Object.values(module || {}))) {
+      try {
+        const scope = Object.getOwnPropertyDescriptor(value ?? {}, "scope")?.value;
+        if (!scope || !["get", "set", "watch", "when"].every(name => declaredMethod(scope, name))
+          || !Object.prototype.hasOwnProperty.call(scope, "query")) continue;
+        const manager = nativeAppServerManagerFromScope(scope, "local") || registry?.(scope, "local");
+        if (sessionControllerLooksUsable(manager && managerSessionController(manager), "modelRouting")) {
+          managers.add(manager);
+        }
+      } catch {
+        continue;
+      }
+    }
+    return managers.size === 1 ? [...managers][0] : null;
+  };
+
   const managerSessionController = (manager) => {
     return {
       kind: "manager",
@@ -388,6 +408,14 @@
           : await import(url);
         // 旧安装的迟到探测不能替换新安装已确认的接口。
         assertCurrent();
+        if (requiresNativeManager) {
+          const manager = appServerManagerFromModule(module);
+          if (manager) {
+            const controller = managerSessionController(manager);
+            window.__codeyCodexSessionController = controller;
+            return controller;
+          }
+        }
         const resolvers = [
           requiresNativeManager ? appServerManagerRegistryResolverFromModule(module) : null,
           appServerManagerResolverFromModule(module),
