@@ -47,6 +47,34 @@ function parsePayload(context, payload) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function usagePush() {
+  const usage = {
+    user_id: "fixture-user",
+    account_id: "fixture-account",
+    plan_type: "plus",
+    rate_limit: {
+      allowed: false,
+      limit_reached: true,
+      primary_window: { used_percent: 100, reset_at: 1800000000, limit_window_seconds: 18000 },
+      secondary_window: { used_percent: 100, reset_at: 1800100000, limit_window_seconds: 604800 },
+    },
+    credits: { has_credits: false, unlimited: false, balance: "0" },
+    spend_control: { reached: true, individual_limit: { used_percent: 100 } },
+    rate_limit_reached_type: { type: "rate_limit_reached" },
+    additional_rate_limits: [{ limit_name: "fixture-model", rate_limit: { allowed: false, limit_reached: true } }],
+  };
+  return {
+    type: "usage.snapshot",
+    payload: {
+      version: 1,
+      stream_id: "fixture-stream",
+      sequence: 1,
+      generated_at_ms: 1800000000000,
+      usage_by_client: { electron: usage, browser: structuredClone(usage) },
+    },
+  };
+}
+
 test("quota unlock clears send blockers without changing official usage or credits", () => {
   const { context, window } = createRuntime();
   const payload = {
@@ -114,6 +142,70 @@ test("quota unlock preserves app-server rate limits and billing across all limit
   assert.deepEqual(parsePayload(context, payload), payload);
 });
 
+test("quota unlock clears desktop push blockers while preserving usage, billing and other clients", () => {
+  const { context, window } = createRuntime();
+  const payload = usagePush();
+  const expected = structuredClone(payload);
+  const usage = expected.payload.usage_by_client.electron;
+  usage.rate_limit.allowed = true;
+  usage.rate_limit.limit_reached = false;
+  usage.rate_limit_reached_type = null;
+  usage.spend_control.reached = false;
+  usage.additional_rate_limits[0].rate_limit.allowed = true;
+  usage.additional_rate_limits[0].rate_limit.limit_reached = false;
+
+  assert.deepEqual(parsePayload(context, payload), expected);
+  assert.equal(window.__codeyQuotaUnlock.status().sanitized, 1);
+});
+
+test("quota unlock handles batched pubsub pushes and subscription catchups without touching other topics", () => {
+  for (const catchup of [false, true]) {
+    for (const transport of ["parse", "websocket"]) {
+      const { context, window } = createRuntime();
+      const snapshot = usagePush();
+      const message = { type: "message", topic_id: "codex-work-usage-push-v1", offset: "fixture-offset", payload: snapshot };
+      const unrelated = { ...structuredClone(message), topic_id: "conversations" };
+      const payload = catchup
+        ? [{ id: 1, reply: { type: "subscribe", topic_id: message.topic_id, recovered: true, catchups: [unrelated, message] } }]
+        : [unrelated, message, { id: 2, reply: { type: "presence" } }];
+      const expected = structuredClone(payload);
+      const expectedMessage = catchup ? expected[0].reply.catchups[1] : expected[1];
+      expectedMessage.payload = parsePayload(context, snapshot);
+      const before = window.__codeyQuotaUnlock.status().sanitized;
+      const value = transport === "parse"
+        ? parsePayload(context, payload)
+        : JSON.parse(new window.WebSocket("ws://127.0.0.1/test").receive(JSON.stringify(payload)));
+
+      assert.deepEqual(value, expected, `${transport}, catchup=${catchup}`);
+      assert.equal(window.__codeyQuotaUnlock.status().sanitized, before + 1);
+    }
+  }
+});
+
+test("quota unlock ignores unsupported or malformed push envelopes", () => {
+  const { context, window } = createRuntime();
+  const snapshot = usagePush();
+  const message = { type: "message", topic_id: "codex-work-usage-push-v1", payload: snapshot };
+  const frames = [
+    { ...snapshot, type: "conversation-update" },
+    { ...snapshot, payload: { ...snapshot.payload, version: 2 } },
+    { ...snapshot, payload: null },
+    { ...snapshot, payload: { version: 1, usage_by_client: { browser: snapshot.payload.usage_by_client.browser } } },
+    { ...snapshot, payload: { version: 1, usage_by_client: { electron: [] } } },
+    [null, "not a message", { reply: null }],
+    [{ ...message, topic_id: "conversations" }],
+    [{ ...message, type: "other" }],
+    [{ id: 1, reply: { type: "subscribe", topic_id: message.topic_id, catchups: {} } }],
+    [{ id: 1, reply: { type: "subscribe", topic_id: "conversations", catchups: [message] } }],
+  ];
+  const socket = new window.WebSocket("ws://127.0.0.1/test");
+  for (const payload of frames) {
+    assert.deepEqual(parsePayload(context, payload), payload);
+    assert.equal(socket.receive(JSON.stringify(payload)), JSON.stringify(payload));
+  }
+  assert.equal(window.__codeyQuotaUnlock.status().sanitized, 0);
+});
+
 test("quota unlock preserves WebSocket read and update measurements while clearing send blockers", () => {
   const { window } = createRuntime();
   const socket = new window.WebSocket("ws://127.0.0.1/test", ["jsonrpc"]);
@@ -164,5 +256,6 @@ test("quota unlock can be disabled before the document is loaded", () => {
   const value = parsePayload(context, payload);
 
   assert.deepEqual(value, payload);
+  assert.deepEqual(parsePayload(context, usagePush()), usagePush());
   assert.equal(window.__codeyQuotaUnlock.status().enabled, false);
 });

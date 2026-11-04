@@ -5,10 +5,9 @@
 // 桌面端渲染进程主世界,先于页面全部业务脚本执行。
 //
 // 原理:官方额度用尽后,Codex 前端把 UI(发送按钮、编辑旧消息、
-// composer 输入区)整体锁死——判定数据全部来自渲染进程内解析的
-// /wham/usage 轮询响应与 /wham/usage/stream 的 usage.snapshot
-// SSE 事件(React Query ['rate-limit-status'] 缓存)。这些 JSON
-// 都在渲染进程里用 JSON.parse 解析,所以在 JSON.parse 层清除
+// composer 输入区)整体锁死——判定数据来自 /wham/usage 轮询响应
+// 与 SSE / WebSocket 的 usage.snapshot 推送
+// (React Query ['rate-limit-status'] 缓存)。在 JSON.parse 层清除
 // 发送阻塞标记,让第三方线路继续发请求。保留真实用量、重置时间
 // 和余额,供官方套餐页面展示;服务端仍按实际额度校验官方请求。
 //
@@ -27,7 +26,7 @@
   } catch {}
 
   const STATE = {
-    version: "1.0.1",
+    version: "1.0.2",
     enabled,
     installedAt: new Date().toISOString(),
     parsePatched: false,
@@ -110,18 +109,46 @@
     return false;
   }
 
+  function sanitizeUsage(root) {
+    if (root?.type === "usage.snapshot" && root.payload != null) {
+      if (root.payload.version !== 1) return false;
+      root = root.payload.usage_by_client?.electron;
+    }
+    if (!looksRelevant(root) && !looksRelevant(root?.usage)) return false;
+    sanitize(root, 0);
+    return true;
+  }
+
+  function sanitizeParsed(root) {
+    if (!Array.isArray(root)) return sanitizeUsage(root);
+    let touched = false;
+    // 新版 pubsub 批量传输消息，重连补发则放在订阅回复的 catchups 中。
+    for (const frame of root) {
+      const reply = frame?.reply;
+      const messages = reply?.type === "subscribe" && reply.topic_id === "codex-work-usage-push-v1"
+        ? reply.catchups : [frame];
+      if (!Array.isArray(messages)) continue;
+      for (const message of messages) {
+        if (message?.type === "message" && message.topic_id === "codex-work-usage-push-v1"
+          && message.payload?.type === "usage.snapshot" && sanitizeUsage(message.payload)) {
+          touched = true;
+        }
+      }
+    }
+    return touched;
+  }
+
   function markSanitized() {
     STATE.sanitized += 1;
     STATE.lastSanitizedAt = new Date().toISOString();
   }
 
-  // 主拦截:JSON.parse(渲染进程内所有 REST/WS/SSE JSON 都经它)
+  // 主拦截:REST / WS / SSE 中的额度 JSON。
   try {
     JSON.parse = function (text, reviver) {
       const v = nativeParse.call(JSON, text, reviver);
       try {
-        if (v && typeof v === "object" && (looksRelevant(v) || (typeof v.usage === "object" && v.usage !== null && looksRelevant(v.usage)))) {
-          sanitize(v, 0);
+        if (sanitizeParsed(v)) {
           markSanitized();
         }
       } catch {}
@@ -130,7 +157,7 @@
     STATE.parsePatched = true;
   } catch {}
 
-  // 兜底:WebSocket JSON-RPC 帧(account/rateLimits/read、rateLimits/updated)
+  // 兜底:WebSocket JSON-RPC 与额度推送帧。
   try {
     const NativeWS = window.WebSocket;
     function PatchedWebSocket(url, protocols) {
@@ -148,10 +175,10 @@
       };
       ws.addEventListener("message", (ev) => {
         try {
-          if (typeof ev.data !== "string" || ev.data.indexOf("rateLimit") === -1) return;
+          if (typeof ev.data !== "string" || (!ev.data.includes("rateLimit") && !ev.data.includes('"usage.snapshot"'))) return;
           const m = nativeParse(ev.data);
           if (!m || typeof m !== "object") return;
-          let touched = false;
+          let touched = sanitizeParsed(m);
           if (m.id != null && (m.result !== undefined || m.error !== undefined)) {
             const method = pending.get(m.id);
             pending.delete(m.id);
