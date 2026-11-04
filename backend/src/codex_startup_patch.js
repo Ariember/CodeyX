@@ -556,7 +556,7 @@
     if (
       source.includes("AppServerRequestClient is missing a message dispatcher")
       && source.includes("mcp_request_enqueued")
-      && source.includes("this.dispatchMessage?.(`mcp-request`")
+      && /this\.dispatchMessage\?\.\((["'`])mcp-request\1/.test(source)
     ) {
       // Current Codex can create threads through AppServerRequestClient without
       // touching the renderer bridge helper above. Rewrite at enqueue time so
@@ -565,7 +565,7 @@
       // config/mcpServer/reload without walking the React tree.
       patched = replaceUniqueRendererGate(
         patched,
-        /(enqueueRequest\(([$A-Z_a-z][$\w]*),([$A-Z_a-z][$\w]*),([$A-Z_a-z][$\w]*),([$A-Z_a-z][$\w]*)=[$A-Z_a-z][$\w]*=>\{this\.dispatchMessage\?\.\(`mcp-request`,\{request:[$A-Z_a-z][$\w]*,hostId:this\.hostId,[\s\S]{0,700}?widget:\4\?\.widget\}\)\},[$A-Z_a-z][$\w]*=null\)\{)let /g,
+        /(enqueueRequest\(([$A-Z_a-z][$\w]*),([$A-Z_a-z][$\w]*),([$A-Z_a-z][$\w]*),([$A-Z_a-z][$\w]*)=[$A-Z_a-z][$\w]*=>\{this\.dispatchMessage\?\.\((["'`])mcp-request\6,\{request:[$A-Z_a-z][$\w]*,hostId:this\.hostId,[\s\S]{0,700}?widget:\4\?\.widget\}\)\},[$A-Z_a-z][$\w]*=null\)\{)let /g,
         (_match, prefix, methodName, paramsName) =>
           `${prefix}(globalThis.__codeyAppServerRequestClients??(globalThis.__codeyAppServerRequestClients=new Map)).set(this.hostId,this);let __codeyRoute=globalThis.__codeyModelWhitelistPatch?.rewriteOutgoingMessage?.({type:\`mcp-request\`,request:{method:${methodName},params:${paramsName}}});if(__codeyRoute?.request){if(globalThis.__codeyModelWhitelistPatch?.isBlockedOutgoingMessage?.(__codeyRoute)){globalThis.__codeyModelWhitelistPatch?.notifyBlockedOutgoingMessage?.(__codeyRoute);return Promise.reject(Error(\`Codey blocked cross-provider model request\`))}${methodName}=__codeyRoute.request.method??${methodName},${paramsName}=__codeyRoute.request.params??${paramsName}}let `,
         "app server request route preflight",
@@ -586,7 +586,7 @@
       // result can never replace Codey's current route catalog.
       patched = replaceUniqueRendererGate(
         patched,
-        /(([$A-Z_a-z][$\w]*)\.resolve\()([$A-Z_a-z][$\w]*)(\),this\.emitRequestLifecycleEvent\(\{type:`completed`,hostId:this\.hostId,method:\2\.method)/g,
+        /(([$A-Z_a-z][$\w]*)\.resolve\()([$A-Z_a-z][$\w]*)(\),this\.emitRequestLifecycleEvent\(\{type:(["'`])completed\5,hostId:this\.hostId,method:\2\.method)/g,
         (_match, prefix, requestName, resultName, suffix) =>
           `${prefix}${resultName}=globalThis.__codeyModelWhitelistPatch?.rewriteIncomingResult?.(${requestName}.method,${resultName})??${resultName}${suffix}`,
         "app server model result rewrite",
@@ -1054,6 +1054,8 @@
       return false;
     }
   };
+  const isNumberedCodexRendererAssetPath = (pathname) =>
+    /\/[0-9]+\.[a-f0-9]+\.(?:c|m)?js$/i.test(pathname);
   const isCodexRendererAssetRequest = (request) => {
     try {
       const url = new URL(request?.url);
@@ -1070,7 +1072,8 @@
               url.pathname,
             )
           ) ||
-          discoveredCodexRendererAssets.has(url.pathname)
+          discoveredCodexRendererAssets.has(url.pathname) ||
+          isNumberedCodexRendererAssetPath(url.pathname)
         )
       );
     } catch {
@@ -1140,6 +1143,11 @@
       });
       return response;
     }
+    // Numbered chunks are numerous; only the request transport needs this path.
+    const pathname = new URL(request.url).pathname;
+    if (isNumberedCodexRendererAssetPath(pathname)
+      && !discoveredCodexRendererAssets.has(pathname)
+      && !source.includes("AppServerRequestClient is missing a message dispatcher")) return response;
     let patched;
     const fingerprint = rendererPatchFingerprint(source);
     if (fingerprint != null && rendererPatchedOutputByFingerprint.has(fingerprint)) {
@@ -2403,9 +2411,22 @@
     if (!result) throw new Error("Codey WSL 启动结果无法识别");
     const cli = result[1];
     const declaration = new RegExp(`(?<![$\\w])${cli.replaceAll("$", "\\$")}=([$\\w]+\\(\\{[^{}]*windowsCodexHome:[^{}]*\\}\\))`);
-    if (!declaration.test(body)) throw new Error("Codey WSL CLI 选择入口无法识别");
-    const patched = body.replace(declaration, (_match, call) =>
-      `${cli}=globalThis.__CODEY_SELECT_WSL_CLI__(()=>${call})`).replace(
+    let selection = declaration.exec(body);
+    // 26.1029 将 CLI 选择器内联成 IIFE；仍验证完整函数边界及 Windows home 参数。
+    if (!selection) {
+      const inline = new RegExp(`(?<![$\\w])${cli.replaceAll("$", "\\$")}=(function\\([^)]*\\)\\{)`).exec(body);
+      if (inline) {
+        const end = matchingBrace(body, inline.index + inline[0].length - 1);
+        const args = end < 0 ? null : /^\(\{[^{}]*windowsCodexHome:[^{}]*\}\)/.exec(body.slice(end + 1));
+        if (args) {
+          const call = body.slice(inline.index + cli.length + 1, end + 1 + args[0].length);
+          selection = [`${cli}=${call}`, call];
+        }
+      }
+    }
+    if (!selection) throw new Error("Codey WSL CLI 选择入口无法识别");
+    const patched = body.replace(selection[0], () =>
+      `${cli}=globalThis.__CODEY_SELECT_WSL_CLI__(()=>${selection[1]})`).replace(
         result[0], result[0].replace(`env:${result[3]},`,
           `env:globalThis.__CODEY_WSL_APP_SERVER_ENV__(${result[3]},${cli},${result[2]},${result[4]}),`));
     return source.slice(0, open) + patched + source.slice(close + 1);

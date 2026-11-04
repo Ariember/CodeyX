@@ -77,12 +77,16 @@ function fixture({ compatible = true, ready = true, splitModules = true, manager
     [sharedUrl]: splitModules && managerAvailable ? managerExports : {},
   };
   const context = vm.createContext({
-    window: { __codeyImportCodexAsset: async url => {
+    window: { __codeyModelWhitelistPatch: {
+      ensureRequestGate: async () => true,
+      requestGateReady: () => true,
+    }, __codeyImportCodexAsset: async url => {
       imports.push(url);
       if (url === brokenUrl) throw new Error("stale asset");
       return modules[url];
     } },
     disposed: false, Date,
+    waitForNativeSessionOperation: async operation => operation(),
     getCodexSessionController: async () => ({ manager }),
     discoverCodexAppAssetUrls: async () => [...(brokenAsset ? [brokenUrl] : []), initialUrl, sharedUrl],
     appServerManagerFromReact: resolver => resolver(scope, "local"),
@@ -103,8 +107,65 @@ test("remote subscription hydrates the native conversation before waiting for it
   assert.equal(calls[0][1].workspaceRoots.length, 0);
 });
 
+test("remote writes require a verified request gate and never submit after failure", async () => {
+  for (const action of ["resume", "create"]) {
+    for (const invalid of ["missing-patch", "missing", "rejected", "false", "unverified", "not-ready"]) {
+      const { context, calls, run } = fixture();
+      let notices = 0;
+      const patch = context.window.__codeyModelWhitelistPatch;
+      patch.notifyRequestGateUnavailable = () => { notices += 1; };
+      if (invalid === "missing-patch") delete context.window.__codeyModelWhitelistPatch;
+      if (invalid === "missing") delete patch.ensureRequestGate;
+      if (invalid === "rejected") patch.ensureRequestGate = async () => { throw new Error("incompatible"); };
+      if (invalid === "false") patch.ensureRequestGate = async () => false;
+      if (invalid === "unverified") delete patch.requestGateReady;
+      if (invalid === "not-ready") patch.requestGateReady = () => false;
+      await assert.rejects(run({ action, threadId: "thread", params: {} }), /模型线路尚未就绪/);
+      assert.equal(calls.length, 0);
+      assert.equal(notices, invalid === "missing-patch" ? 0 : 1);
+    }
+  }
+});
+
+test("late gate verification cannot submit after disposal or adapter replacement", async () => {
+  for (const action of ["resume", "create"]) {
+    for (const invalid of ["disposed", "replaced"]) {
+      const { context, calls, run } = fixture();
+      let notices = 0;
+      let finish;
+      context.window.__codeyModelWhitelistPatch.notifyRequestGateUnavailable = () => { notices += 1; };
+      context.window.__codeyModelWhitelistPatch.ensureRequestGate = () => new Promise(resolve => { finish = resolve; });
+      const pending = run({ action, threadId: "thread", params: {} });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(typeof finish, "function");
+      if (invalid === "disposed") context.disposed = true;
+      else context.window.__codeyModelWhitelistPatch = {
+        ensureRequestGate: async () => true, requestGateReady: () => true,
+        notifyRequestGateUnavailable: () => { notices += 1; },
+      };
+      finish(true);
+      await assert.rejects(pending, /过期|模型线路尚未就绪/);
+      assert.equal(calls.length, 0);
+      assert.equal(notices, 0);
+    }
+  }
+});
+
+test("a request gate replaced between verification and native submission cannot write", async () => {
+  for (const action of ["resume", "create"]) {
+    const { context, calls, run } = fixture();
+    context.window.__codeyModelWhitelistPatch.requestGateReady = () => {
+      queueMicrotask(() => { context.window.__codeyModelWhitelistPatch = { requestGateReady: () => true }; });
+      return true;
+    };
+    await assert.rejects(run({ action, threadId: "thread", params: {} }), /模型线路尚未就绪/);
+    assert.equal(calls.length, 0);
+  }
+});
+
 test("draft defaults read native project config without creating a thread or exposing credentials", async () => {
-  const { calls, run } = fixture();
+  const { calls, context, run } = fixture();
+  delete context.window.__codeyModelWhitelistPatch;
   const result = await run({ action: "defaults", cwd: "E:/code/codey" });
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { model: "route/model", effort: "ultra", serviceTier: "priority" });
   assert.equal(calls.length, 1);
@@ -276,4 +337,13 @@ test("a late native settings read cannot continue creating a conversation after 
     Inputs.prototype.readCreationInputs = async () => { context.disposed = true; return "native-inputs"; };
     await assert.rejects(run({ action: "create", params: {} }), /过期/);
   }
+});
+
+test("a late creation input read cannot continue with a replacement request gate", async () => {
+  const { context, Inputs, run } = fixture();
+  Inputs.prototype.readCreationInputs = async () => {
+    context.window.__codeyModelWhitelistPatch = { requestGateReady: () => true };
+    return "native-inputs";
+  };
+  await assert.rejects(run({ action: "create", params: {} }), /模型线路尚未就绪/);
 });

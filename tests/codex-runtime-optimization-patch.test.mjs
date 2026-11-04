@@ -131,6 +131,10 @@ const wslLaunchFixture = [
   'let o=[...$a.args],d=["--exec",$a.executablePath,...o],f=$environment({windowsCodexHome:i,interactivePath:e.path});',
   'return{executablePath:$a.executablePath,args:o,env:f,spawnCommand:`wsl.exe`,spawnArgs:d}}',
 ].join("");
+const wslInlineLaunchFixture = wslLaunchFixture.replace(
+  "$native({...e,windowsCodexHome:i})",
+  "function(e){let n=function(e,t){return $native({...e,...t})}(e,{windowsCodexHome:e.windowsCodexHome});return n?{executablePath:n.executablePath,args:n.args}:null}({...e,windowsCodexHome:i})",
+);
 
 test("settings WSL selects the native Linux backend and restores the Windows override", async () => {
   const runtime = await loadPatchInIsolatedContext([], wslContext([]), false);
@@ -240,6 +244,38 @@ test("WSL source patch follows the native local transport and is idempotent", as
     runtime.context.process.platform = "linux";
     assert.equal(patch(wslLaunchFixture), wslLaunchFixture);
   } finally { runtime.restore(); }
+});
+
+test("inlined WSL CLI selectors load through the main-process compile hook", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codey-inline-wsl-"));
+  const filename = join(directory, ".vite", "build", "early-bootstrap-fixture.js");
+  await mkdir(join(directory, ".vite", "build"), { recursive: true });
+  await writeFile(filename, wslInlineLaunchFixture);
+  const runtime = await loadPatchInIsolatedContext([], wslContext([]), false);
+  try {
+    runtime.context.$native = () => ({ executablePath: runtime.context.process.env.CODEX_CLI_PATH ?? relayTarget, args: ["app-server"] });
+    runtime.context.$environment = () => ({});
+    process.getBuiltinModule("module")._extensions[".js"]({
+      _compile(source) { vm.runInNewContext(source, runtime.context); },
+    }, filename);
+    const native = {};
+    assert.equal(runtime.context.launch({ hostConfig: { kind: "local" }, spawnInsideWsl: false, native }), native);
+    const wsl = runtime.context.launch({ hostConfig: { kind: "local" }, spawnInsideWsl: true });
+    assert.equal(wsl.executablePath, customCli);
+    assert.equal(wsl.env.CODEY_CODEX_CLI_WRAPPER_TARGET, relayTarget);
+    assert.equal(runtime.context.process.env.CODEX_CLI_PATH, relayWrapper);
+    const patch = runtime.context.__CODEY_PATCH_CODEX_WSL_LAUNCH__;
+    const patched = patch(wslInlineLaunchFixture);
+    assert.equal(patch(patched), patched);
+    assert.equal(patched.match(/__CODEY_SELECT_WSL_CLI__/g).length, 1);
+    assert.throws(() => patch(wslInlineLaunchFixture.replace("}({...e,windowsCodexHome:i})", "}(e)")), /WSL CLI 选择入口无法识别/);
+    runtime.context.$native = () => { throw new Error("native resolver failed"); };
+    assert.throws(() => runtime.context.launch({ hostConfig: { kind: "local" }, spawnInsideWsl: true }), /native resolver failed/);
+    assert.equal(runtime.context.process.env.CODEX_CLI_PATH, relayWrapper);
+  } finally {
+    runtime.restore();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("only a prepared WSL spawn confirms runtime configuration after successful process creation", async () => {

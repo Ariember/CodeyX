@@ -1,6 +1,6 @@
 // Keep Codex's native model allowlist aligned with the current CodeyX channel.
 (() => {
-  const patchVersion = "69";
+  const patchVersion = "71";
   const nativeSelectionOnly = window.__codeyNativeModelSelectionOnly === true;
   const officialProviderId = "openai";
   const localRouterProviderId = "codey_router";
@@ -1827,11 +1827,13 @@
       visitedCount += 1;
 
       try {
-        if (
-          typeof value.getQueriesData === "function"
-          && typeof value.setQueryData === "function"
-          && typeof value.invalidateQueries === "function"
-        ) {
+        if (["getQueriesData", "setQueryData", "invalidateQueries"].every((name) => {
+          for (let current = value, hops = 0; current && hops < 8; current = Object.getPrototypeOf(current), hops += 1) {
+            const descriptor = Object.getOwnPropertyDescriptor(current, name);
+            if (descriptor) return typeof descriptor.value === "function";
+          }
+          return false;
+        })) {
           queryClients.add(value);
           rememberBounded(
             knownModelQueryClients,
@@ -1863,7 +1865,8 @@
         ) continue;
         let child;
         try {
-          child = value[key];
+          // 探测只读取数据字段；未知 getter 可能启动原生信号或阻塞渲染线程。
+          child = Object.getOwnPropertyDescriptor(value, key)?.value;
         } catch {
           continue;
         }
@@ -2970,12 +2973,8 @@
     return params?.[blockedProviderRequestKey] || null;
   };
 
-  const showBlockedProviderNotice = (detail) => {
-    const blocked = blockedProviderRequest(detail);
-    if (!blocked) return false;
-    const target = blocked.routeName || "所选线路";
-    const message = blocked.message || `暂时无法确认此任务的线路配置。请重启 Codex 后恢复任务，或用 ${target} 新建任务。`;
-    console.warn("[CodeyX] provider migration required before routed turn", blocked);
+  const showModelRequestNotice = (message) => {
+    if (disposed) return false;
     try {
       const noticeId = "codey-provider-mismatch-notice";
       let notice = document.getElementById?.(noticeId);
@@ -3008,6 +3007,15 @@
       // Console warning remains available if the renderer DOM is unavailable.
     }
     return true;
+  };
+
+  const showBlockedProviderNotice = (detail) => {
+    const blocked = blockedProviderRequest(detail);
+    if (!blocked) return false;
+    const target = blocked.routeName || "所选线路";
+    const message = blocked.message || `暂时无法确认此任务的线路配置。请重启 Codex 后恢复任务，或用 ${target} 新建任务。`;
+    console.warn("[CodeyX] provider migration required before routed turn", blocked);
+    return showModelRequestNotice(message);
   };
 
   const patchOutgoingModelRequest = (detail) => {
@@ -3170,6 +3178,10 @@
     refresh: loadModelCatalog,
     setCatalog: setModelCatalog,
     ensureRequestGate: requestGate.ensure,
+    requestGateReady: requestGate.isReady,
+    notifyRequestGateUnavailable: () => requestGate.isReady() ? false : showModelRequestNotice(
+      "模型线路尚未就绪，部分线路功能暂不可用；请更新或修复 CodeyX 后重试",
+    ),
     // The Codex renderer calls electronBridge before emitting its diagnostic
     // CustomEvent. The startup source gate invokes this synchronous hook at the
     // real transport boundary so thread/start receives modelProvider in time.

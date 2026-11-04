@@ -86,11 +86,17 @@ fn inspect(file: &mut File) -> Result<Inspection> {
         "Inspector fuse 已移除，无法修复"
     );
     let offset = sentinel + FUSE_SENTINEL.len() as u64 + 2 + NODE_CLI_INSPECT_FUSE_INDEX as u64;
+    let digest = digest(file)?;
+    let normalized = if current == b'0' {
+        digest.clone()
+    } else {
+        normalized_digest(file, offset)?
+    };
     Ok(Inspection {
         offset,
         current,
-        digest: digest(file)?,
-        normalized: normalized_digest(file, offset)?,
+        digest,
+        normalized,
     })
 }
 
@@ -128,21 +134,23 @@ pub(crate) fn prepare_inspector_repair(app_dir: &Path) -> Result<InspectorRepair
         "Electron 运行时不在所选 Codex 目录中"
     );
     let state = codey_runtime_core::paths::default_app_state_dir();
-    let normalized = inspect(&mut File::open(&binary)?)?.normalized;
     let backup = state
         .join("inspector-backups")
-        .join(crate::fs_util::sha256_hex_str(&binary.to_string_lossy()))
-        .join(&normalized);
-    let mut plan = prepare(binary, backup, state.join(super::CACHE_FILE))?;
-    anyhow::ensure!(
-        plan.inspection.normalized == normalized,
-        "预检期间 Electron 运行时已变化"
-    );
+        .join(crate::fs_util::sha256_hex_str(&binary.to_string_lossy()));
+    let mut plan = prepare(
+        binary,
+        |inspection| backup.join(&inspection.normalized),
+        state.join(super::CACHE_FILE),
+    )?;
     plan.app_identity = Some((app_dir, version));
     Ok(plan)
 }
 
-fn prepare(binary: PathBuf, backup: PathBuf, cache: PathBuf) -> Result<InspectorRepairPlan> {
+fn prepare(
+    binary: PathBuf,
+    backup: impl FnOnce(&Inspection) -> PathBuf,
+    cache: PathBuf,
+) -> Result<InspectorRepairPlan> {
     let mut file = File::open(&binary).context("读取 Electron 运行时失败")?;
     let identity = identity(&file)?;
     let inspection = inspect(&mut file)?;
@@ -150,6 +158,7 @@ fn prepare(binary: PathBuf, backup: PathBuf, cache: PathBuf) -> Result<Inspector
         identity == self::identity(&file)?,
         "预检期间 Electron 运行时已变化"
     );
+    let backup = backup(&inspection);
     if backup.try_exists()? {
         validate_backup(&binary, &backup, &inspection)?;
     }
@@ -436,7 +445,7 @@ mod tests {
         let binary = fs::canonicalize(binary).unwrap();
         let plan = prepare(
             binary,
-            temp.path().join("backup"),
+            |_| temp.path().join("backup"),
             temp.path().join("cache"),
         )
         .unwrap();
@@ -444,7 +453,32 @@ mod tests {
     }
 
     fn reprepare(plan: &InspectorRepairPlan) -> InspectorRepairPlan {
-        prepare(plan.binary.clone(), plan.backup.clone(), plan.cache.clone()).unwrap()
+        prepare(
+            plan.binary.clone(),
+            |_| plan.backup.clone(),
+            plan.cache.clone(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn inspection_hashes_preserve_full_runtime_validation() {
+        let (_temp, plan, original) = fixture("010011001");
+        let original_digest = crate::fs_util::sha256_hex(&original);
+        assert_eq!(plan.inspection.digest, original_digest);
+        assert_eq!(plan.inspection.normalized, original_digest);
+
+        let mut enabled = original;
+        enabled[plan.inspection.offset as usize] = b'1';
+        fs::write(&plan.binary, &enabled).unwrap();
+        let inspection = inspect(&mut File::open(&plan.binary).unwrap()).unwrap();
+        assert_eq!(inspection.digest, crate::fs_util::sha256_hex(&enabled));
+        assert_eq!(inspection.normalized, original_digest);
+
+        enabled[0] ^= 1;
+        fs::write(&plan.binary, &enabled).unwrap();
+        let inspection = inspect(&mut File::open(&plan.binary).unwrap()).unwrap();
+        assert_ne!(inspection.normalized, original_digest);
     }
 
     #[test]
@@ -544,7 +578,14 @@ mod tests {
             b"absent".to_vec(),
         ] {
             fs::write(&plan.binary, &bytes).unwrap();
-            assert!(prepare(plan.binary.clone(), plan.backup.clone(), plan.cache.clone()).is_err());
+            assert!(
+                prepare(
+                    plan.binary.clone(),
+                    |_| plan.backup.clone(),
+                    plan.cache.clone()
+                )
+                .is_err()
+            );
             assert_eq!(fs::read(&plan.binary).unwrap(), bytes);
             assert!(!temp.path().join("backup").exists());
         }
@@ -576,12 +617,26 @@ mod tests {
         fs::remove_dir(&plan.backup).unwrap();
         apply_inspector_repair(&plan).unwrap();
         fs::write(plan.backup.join("original.bin"), b"damaged").unwrap();
-        assert!(prepare(plan.binary.clone(), plan.backup.clone(), plan.cache.clone()).is_err());
+        assert!(
+            prepare(
+                plan.binary.clone(),
+                |_| plan.backup.clone(),
+                plan.cache.clone()
+            )
+            .is_err()
+        );
         fs::write(plan.backup.join("original.bin"), &original).unwrap();
         let mut updated = fs::read(&plan.binary).unwrap();
         updated[0] = b'X';
         fs::write(&plan.binary, &updated).unwrap();
-        assert!(prepare(plan.binary.clone(), plan.backup.clone(), plan.cache.clone()).is_err());
+        assert!(
+            prepare(
+                plan.binary.clone(),
+                |_| plan.backup.clone(),
+                plan.cache.clone()
+            )
+            .is_err()
+        );
         assert_eq!(fs::read(&plan.binary).unwrap(), updated);
     }
 

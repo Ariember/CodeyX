@@ -132,7 +132,9 @@ mod tests {
                     assert!(expression.contains("__codeyRuntimeOptimizations"));
                     assert!(expression.contains("discoverAppAssetUrls"));
                     assert!(!expression.contains("__CODEY_SLIM_PET__"));
-                    assert!(!expression.contains("__codeyModelWhitelistPatch"));
+                    // The lazy adapter may reference the gate without installing its hooks or UI.
+                    assert!(!expression.contains("__codeyCreateModelRequestGate"));
+                    assert!(!expression.contains("codey-provider-mismatch-notice"));
                     assert!(!expression.contains("__codeySettingsOverlay"));
                     assert_eq!(request["params"]["awaitPromise"], false);
                 }

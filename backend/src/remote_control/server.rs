@@ -478,9 +478,7 @@ fn event_stream(
         .await;
         let result = async {
             if *shutdown.borrow() || !authorized(&core,&token) { return Err("设备授权已撤销".to_string()); }
-            let state = core.state.upgrade().ok_or("CodeyX 正在退出")?;
-            super::create::open(&state, &thread).await?;
-            let mut desktop = Desktop::follow(&thread).await?;
+            let mut desktop = follow_desktop(&core, &token, &thread).await?;
             let mut pending = Some(tokio::time::Instant::now());
             let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
             let mut ticks = 0u8;
@@ -587,14 +585,35 @@ fn authorize_action(core: &Core, token: &str) -> Result<(), String> {
     Ok(())
 }
 
+async fn follow_desktop(core: &Core, token: &str, thread: &str) -> Result<Desktop, String> {
+    authorize_action(core, token)?;
+    let desktop = follow_or_open(Desktop::follow(thread), async {
+        authorize_action(core, token)?;
+        let state = core.state.upgrade().ok_or("CodeyX 正在退出")?;
+        super::create::open(&state, thread).await?;
+        Desktop::follow(thread).await
+    })
+    .await?;
+    authorize_action(core, token)?;
+    Ok(desktop)
+}
+
+async fn follow_or_open<T>(
+    following: impl std::future::Future<Output = Result<T, String>>,
+    open: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    match following.await {
+        Err(error) if error == super::desktop::OWNER_UNAVAILABLE => open.await,
+        result => result,
+    }
+}
+
 async fn perform_action(core: &Core, token: &str, args: &Value) -> Result<Value, String> {
     let thread = args["threadId"].as_str().ok_or("缺少会话标识")?;
     super::desktop::validate_thread(thread)?;
     let action = args["action"].as_str().ok_or("缺少会话操作")?;
     if action == "open" {
-        let state = core.state.upgrade().ok_or("CodeyX 正在退出")?;
-        super::create::open(&state, thread).await?;
-        Desktop::follow(thread).await?;
+        follow_desktop(core, token, thread).await?;
         return Ok(json!({"status":"ok"}));
     }
     let mut desktop = Desktop::follow(thread).await?;
@@ -606,7 +625,36 @@ async fn perform_action(core: &Core, token: &str, args: &Value) -> Result<Value,
         validate_model_settings(&catalog, &desktop.state, args)?;
     }
     authorize_action(core, token)?;
-    desktop.action(action, args).await
+    desktop
+        .action(action, args, async {
+            let state = core.state.upgrade().ok_or("CodeyX 正在退出")?;
+            let runtime = state
+                .runtime
+                .lock()
+                .await
+                .clone()
+                .ok_or("Codex 桌面尚未启动")?;
+            let websocket = runtime.renderer_websocket_url().await;
+            require_model_request_gate(&websocket).await?;
+            authorize_action(core, token)
+        })
+        .await
+}
+
+async fn require_model_request_gate(websocket_url: &str) -> Result<(), String> {
+    let response = tokio::time::timeout(
+        Duration::from_secs(2),
+        codey_runtime_core::bridge::evaluate_script(
+            websocket_url,
+            "window.__codeyModelWhitelistPatch?.requestGateReady?.() === true",
+        ),
+    )
+    .await;
+    if matches!(response, Ok(Ok(ref value)) if value["result"]["result"]["value"] == true) {
+        Ok(())
+    } else {
+        Err("模型请求校验尚未就绪，远程操作未发送，请稍后重试".into())
+    }
 }
 
 fn validate_model_settings(catalog: &Value, desktop: &Value, args: &Value) -> Result<(), String> {

@@ -63,7 +63,10 @@ test("the native request client sends route changes through its frozen bridge", 
   const originals = [NativeClient.prototype.enqueueRequest, NativeClient.prototype.createRequest, NativeClient.prototype.onResult];
   const client = new NativeClient();
   const runtime = await loadPatch(mixedCompactionCatalog, [statsigClient()], { requestClient: client });
+  assert.equal(runtime.patch.requestGateReady(), false);
   assert.equal(await runtime.patch.ensureRequestGate(), true);
+  assert.equal(runtime.patch.requestGateReady(), true);
+  assert.equal(runtime.patch.notifyRequestGateUnavailable(), false);
   assert.equal(await runtime.patch.ensureRequestGate(), true);
   const started = client.enqueueRequest("thread/start", { model: "remote/shared" }, "widget", 7);
   assert.equal(sends[0].params.modelProvider, "codey_router");
@@ -91,6 +94,7 @@ test("the native request client sends route changes through its frozen bridge", 
   assert.ok(models.data.some((entry) => entry.model === "remote/shared"));
   assert.equal(models.data.some((entry) => entry.model === "stale"), false);
   runtime.patch.dispose();
+  assert.equal(runtime.patch.requestGateReady(), false);
   assert.deepEqual([NativeClient.prototype.enqueueRequest, NativeClient.prototype.createRequest, NativeClient.prototype.onResult], originals);
 });
 
@@ -112,6 +116,7 @@ test("disposing before a cached native gate installs leaves the client unchanged
 test("native request gate fails when the client cannot be verified", async () => {
   const runtime = await loadPatch(mixedCompactionCatalog, [statsigClient()], { requestClient: { hostId: "local" } });
   await assert.rejects(runtime.patch.ensureRequestGate(), /不可校验/);
+  assert.equal(runtime.patch.requestGateReady(), false);
   runtime.patch.dispose();
 });
 
@@ -140,6 +145,17 @@ test("missing native adapter fails the request gate without loading session UI",
   const runtime = await loadPatch(mixedCompactionCatalog, [statsigClient()]);
   await assert.rejects(runtime.patch.ensureRequestGate(), /模型请求校验尚未就绪/);
   runtime.patch.dispose();
+});
+
+test("unavailable routing shows an accessible notice independently of model presentation", async () => {
+  const body = new FakeElementCore("body");
+  const runtime = await loadPatch(mixedCompactionCatalog, [statsigClient()], { documentBody: body, failPresentation: true });
+  assert.equal(runtime.patch.notifyRequestGateUnavailable(), true);
+  const notice = body.querySelector("[id]");
+  assert.equal(notice.getAttribute("role"), "alert");
+  assert.equal(notice.textContent, "模型线路尚未就绪，部分线路功能暂不可用；请更新或修复 CodeyX 后重试");
+  runtime.patch.dispose();
+  assert.equal(runtime.patch.notifyRequestGateUnavailable(), false);
 });
 
 test("resume and fork retain the saved route after remote compaction is disabled", async () => {
@@ -1019,7 +1035,7 @@ test("a backend-pushed catalog updates immediately without a nested bridge reque
   const { patch } = runtime;
   const eventsBeforePush = client.events.length;
 
-  assert.equal(patch.version, "69");
+  assert.equal(patch.version, "71");
   assert.equal(await patch.setCatalog({
     status: "ok",
     models: ["gpt-5.6-sol", "provider-hot-pushed"],
@@ -4081,6 +4097,22 @@ test("unchanged catalog retries and interactions do not repeat full React discov
   });
   assert.equal(runtime.wildcardScanCount(), 2);
   assert.equal(runtime.patch.delivery().revision, 2);
+  runtime.patch.dispose();
+});
+
+test("query discovery skips unknown accessors while finding inherited native methods", async () => {
+  const queryClient = Object.create(activeModelQueryClient(["stale"]));
+  let getterCalls = 0;
+  const decoy = Object.defineProperties({}, {
+    getQueriesData: { enumerable: true, get() { getterCalls += 1; return () => []; } },
+    lazySignal: { enumerable: true, get() { getterCalls += 1; return {}; } },
+  });
+  const runtime = await loadPatch({
+    status: "ok", models: ["current"], default_model: "current",
+  }, [statsigClient()], { queryClient: decoy, reactModelState: { queryClient } });
+  assert.equal(getterCalls, 0);
+  assert.deepEqual(queryClient.models(), ["current"]);
+  assert.equal(runtime.patch.delivery().queryClients, 1);
   runtime.patch.dispose();
 });
 

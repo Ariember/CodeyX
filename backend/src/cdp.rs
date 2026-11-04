@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error_log;
 
+mod request_gate;
 mod runtime_optimizations;
 pub(crate) use runtime_optimizations::refresh_auxiliary_renderers;
 #[cfg(windows)]
@@ -205,6 +206,7 @@ pub struct InjectedTarget {
     websocket_url: Arc<str>,
     pump: BridgePumpHandle,
     injection_statuses: Arc<[InjectionScriptStatus]>,
+    request_gate: request_gate::Task,
 }
 
 #[derive(Debug)]
@@ -267,6 +269,7 @@ impl InjectedTarget {
     }
 
     pub async fn close(self) {
+        self.request_gate.abort();
         self.pump.close().await;
     }
 }
@@ -1071,52 +1074,18 @@ fn evaluate_exception_detail(message: &str) -> Option<String> {
     Some(truncate_chars(detail, MAX_INJECTION_ERROR_CHARS / 2))
 }
 
-/// 已成功安装桥接的 CDP 会话。校验阶段失败时保留它，下一轮重试只在原
-/// WebSocket 上重跑校验，不重连也不重放注入脚本。
+/// 已成功安装桥接、待确认浮层可用的 CDP 会话。
 struct EstablishedInjection {
     target_id: String,
     websocket_url: Arc<str>,
     pump: BridgePumpHandle,
 }
 
-/// 校验阶段的失败需要区分恢复方式：页面端报告 Codex 尚未就绪时只要保留桥接
-/// 继续轮询；注入脚本缺失、桥接被替换或 CDP 连接失效时才需要整轮重装。
+/// 浮层或桥接失效时重装；仍可用的会话可保留供下一轮确认。
 struct VerifyFailure {
     reinstall: bool,
     error: anyhow::Error,
 }
-
-/// 校验脚本返回 JSON 而不是抛异常：页面侧能分清「还没就绪」与「补丁根本没
-/// 装上」，宿主据此决定轮询还是重装。
-#[derive(Deserialize)]
-struct RequestGateVerdict {
-    ready: bool,
-    #[serde(default)]
-    reinstall: bool,
-    message: Option<String>,
-}
-
-// Runtime.evaluate 未开 returnByValue 时只有原始类型回传 value，判定结果
-// 必须用 JSON 字符串承载，与注入状态快照同一约定。
-const REQUEST_GATE_VERIFY_SCRIPT: &str = r#"(async () => {
-  const verdict = (ready, reinstall, message) => JSON.stringify({ ready, reinstall, message });
-  const patch = window.__codeyModelWhitelistPatch;
-  if (!patch || typeof patch.ensureRequestGate !== "function") {
-    return verdict(false, true, "模型请求补丁未注入");
-  }
-  try {
-    if (await patch.ensureRequestGate() !== true) {
-      return verdict(false, false, "模型请求校验未就绪");
-    }
-  } catch (error) {
-    return verdict(
-      false,
-      window.__codeyModelWhitelistPatch !== patch,
-      String((error && error.message) || error || "模型请求校验失败"),
-    );
-  }
-  return verdict(true, false, "");
-})()"#;
 
 enum AttemptOutcome {
     Injected(InjectedTarget),
@@ -1148,11 +1117,15 @@ async fn run_injection_attempt(
         },
     };
     match verify_injection(&bridge, scripts, phase).await {
-        Ok(injection_statuses) => AttemptOutcome::Injected(InjectedTarget {
-            websocket_url: bridge.websocket_url,
-            pump: bridge.pump,
-            injection_statuses,
-        }),
+        Ok(injection_statuses) => {
+            let request_gate = request_gate::spawn(bridge.target_id, bridge.websocket_url.clone());
+            AttemptOutcome::Injected(InjectedTarget {
+                websocket_url: bridge.websocket_url,
+                pump: bridge.pump,
+                injection_statuses,
+                request_gate,
+            })
+        }
         Err(failure) if failure.reinstall => {
             // 校验端明确要求重建：显式关掉这条会话，下一轮从头装桥。
             bridge.pump.close().await;
@@ -1213,43 +1186,7 @@ async fn verify_injection(
     scripts: &PreparedInjectionScripts,
     phase: &AtomicU8,
 ) -> std::result::Result<Arc<[InjectionScriptStatus]>, VerifyFailure> {
-    // Native macOS does not pass through Electron's renderer asset hook. The
-    // diagnostic send event occurs after its frozen bridge has sent the request.
-    // Require a synchronous request-client guard before reporting startup ready.
-    phase.store(InjectionPhase::VerifyRequestGate as u8, Ordering::Release);
-    let response = codey_runtime_core::bridge::evaluate_script_with_await_promise_timeout(
-        &bridge.websocket_url,
-        REQUEST_GATE_VERIFY_SCRIPT,
-        true,
-        Duration::from_secs(20),
-    )
-    .await
-    .map_err(|error| VerifyFailure {
-        // CDP 层失败（连接断开、evaluate 自身异常）意味着这条桥已不可用。
-        reinstall: true,
-        error: error.context("校验模型请求入口失败"),
-    })?;
-    let payload = runtime_value(&response)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| VerifyFailure {
-            reinstall: true,
-            error: anyhow::anyhow!("模型请求校验未通过：校验响应不可解析"),
-        })?;
-    let verdict: RequestGateVerdict =
-        serde_json::from_str(payload).map_err(|error| VerifyFailure {
-            reinstall: true,
-            error: anyhow::anyhow!("模型请求校验未通过：校验结果反序列化失败（{error}）"),
-        })?;
-    if !verdict.ready {
-        let message = verdict
-            .message
-            .filter(|message| !message.is_empty())
-            .unwrap_or_else(|| "模型请求校验未就绪".to_string());
-        return Err(VerifyFailure {
-            reinstall: verdict.reinstall,
-            error: anyhow::anyhow!("模型请求校验未通过：{message}"),
-        });
-    }
+    // 模型请求入口随 Codex 自身初始化；后台确认不影响已安装的桥接与浮层。
     phase.store(InjectionPhase::VerifyOverlay as u8, Ordering::Release);
     ensure_settings_overlay_ready(&bridge.websocket_url)
         .await
@@ -2596,79 +2533,6 @@ assert.equal(nextPage.window.attempts, 1);
         );
         assert_eq!(deadline.at(), started + CDP_INJECTION_TIMEOUT);
         assert_eq!(deadline.page_discovered(), Some(Duration::from_secs(29)));
-    }
-
-    #[test]
-    fn request_gate_verdict_parses_poll_and_reinstall_shapes() {
-        let poll: RequestGateVerdict = serde_json::from_str(
-            r#"{"ready":false,"reinstall":false,"message":"当前 Codex 暂不支持模型请求校验"}"#,
-        )
-        .unwrap();
-        assert!(!poll.ready && !poll.reinstall);
-        assert_eq!(
-            poll.message.as_deref(),
-            Some("当前 Codex 暂不支持模型请求校验")
-        );
-        // 旧页面可能只回 ready/message，reinstall 缺省按轮询处理。
-        let legacy: RequestGateVerdict =
-            serde_json::from_str(r#"{"ready":false,"message":"x"}"#).unwrap();
-        assert!(!legacy.ready && !legacy.reinstall);
-        assert!(
-            serde_json::from_str::<RequestGateVerdict>(r#"{"ready":true}"#)
-                .unwrap()
-                .ready
-        );
-    }
-
-    #[test]
-    fn request_gate_verify_script_marks_missing_patch_for_reinstall() {
-        let harness = r#"
-const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const script = JSON.parse(process.argv[1]);
-const run = async (patch) => {
-  const context = vm.createContext({ window: {}, console });
-  context.window.__codeyModelWhitelistPatch = patch;
-  // 判定以 JSON 字符串返回（Runtime.evaluate 未开 returnByValue 时对象不回传）。
-  return JSON.parse(await vm.runInContext(script, context));
-};
-(async () => {
-  // 补丁未注入：只有整轮重装能修复。
-  for (const patch of [null, undefined, {}]) {
-    const verdict = await run(patch);
-    assert.equal(verdict.ready, false);
-    assert.equal(verdict.reinstall, true);
-  }
-  assert.equal((await run({ ensureRequestGate: () => Promise.resolve(true) })).ready, true);
-  // Codex 尚未就绪：保留桥接继续轮询。
-  const notReady = { ensureRequestGate: () => Promise.reject(new Error("当前 Codex 暂不支持模型请求校验")) };
-  const polled = await run(notReady);
-  assert.equal(polled.ready, false);
-  assert.equal(polled.reinstall, false);
-  assert.equal(polled.message, "当前 Codex 暂不支持模型请求校验");
-  // 校验等待期间补丁被脚本重放替换：旧实例的失败必须按重装处理。
-  const context = vm.createContext({ window: {}, console });
-  context.window.__codeyModelWhitelistPatch = {
-    ensureRequestGate: () => Promise.reject(new Error("模型请求校验已重新加载")),
-  };
-  const pending = vm.runInContext(script, context);
-  context.window.__codeyModelWhitelistPatch = { ensureRequestGate: () => Promise.resolve(true) };
-  assert.equal(JSON.parse(await pending).reinstall, true);
-})().catch((error) => { console.error(error); process.exit(1); });
-"#;
-        let output = std::process::Command::new("node")
-            .args([
-                "-e",
-                harness,
-                &serde_json::to_string(REQUEST_GATE_VERIFY_SCRIPT).unwrap(),
-            ])
-            .output()
-            .expect("Node should run the request-gate verify script harness");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 
     /// 按给定阶段的退避节奏推导探测时刻（毫秒），首项为立即执行的第一次探测。

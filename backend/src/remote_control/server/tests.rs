@@ -1,6 +1,122 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[tokio::test]
+async fn an_existing_desktop_owner_does_not_resume_or_check_the_model_gate() {
+    let owner = follow_or_open(async { Ok("existing owner") }, async {
+        panic!("an existing owner's subscription must not resume the thread")
+    })
+    .await
+    .unwrap();
+    assert_eq!(owner, "existing owner");
+}
+
+#[tokio::test]
+async fn only_an_unowned_thread_falls_back_to_open_and_other_errors_stay_visible() {
+    for error in [
+        "设备授权已撤销",
+        "CodeyX 正在退出",
+        "Codex 桌面连接已断开",
+        "桌面快照会话不匹配",
+    ] {
+        let result = follow_or_open::<()>(async { Err(error.into()) }, async {
+            panic!("an unknown follow failure must not start a resume")
+        })
+        .await;
+        assert_eq!(result.unwrap_err(), error);
+    }
+    let owner = follow_or_open(
+        async { Err(super::super::desktop::OWNER_UNAVAILABLE.into()) },
+        async { Ok("opened owner") },
+    )
+    .await
+    .unwrap();
+    assert_eq!(owner, "opened owner");
+    assert_eq!(
+        follow_or_open::<()>(
+            async { Err(super::super::desktop::OWNER_UNAVAILABLE.into()) },
+            async { Err("模型请求校验尚未就绪".into()) },
+        )
+        .await
+        .unwrap_err(),
+        "模型请求校验尚未就绪"
+    );
+}
+
+#[tokio::test]
+async fn remote_model_gate_probe_requires_true_and_hides_transport_errors() {
+    for result in [
+        json!({"result":{"type":"boolean","value":true}}),
+        json!({"result":{"type":"boolean","value":false}}),
+        json!({"result":{"type":"string","value":"true"}}),
+        json!({"exceptionDetails":{"text":"private transport details"}}),
+        Value::Null,
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let ready = result["result"]["value"] == true;
+        let fixture = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request: Value =
+                serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                    .unwrap();
+            assert_eq!(request["method"], "Runtime.evaluate");
+            assert_eq!(
+                request["params"]["expression"],
+                "window.__codeyModelWhitelistPatch?.requestGateReady?.() === true"
+            );
+            assert_eq!(request["params"]["awaitPromise"], false);
+            if !result.is_null() {
+                socket
+                    .send(Message::Text(
+                        json!({"id":request["id"],"result":result})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+        let result = require_model_request_gate(&url).await;
+        assert_eq!(result.is_ok(), ready);
+        if !ready {
+            assert_eq!(
+                result.unwrap_err(),
+                "模型请求校验尚未就绪，远程操作未发送，请稍后重试"
+            );
+        }
+        fixture.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn remote_model_gate_probe_times_out_without_retrying_or_sending_a_mutation() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let (observed, received) = tokio::sync::oneshot::channel();
+    let fixture = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let request: Value =
+            serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(request["method"], "Runtime.evaluate");
+        observed.send(()).unwrap();
+        // Keep the peer connected and withhold only the read-only probe response.
+        let _socket = socket;
+        std::future::pending::<()>().await;
+    });
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        require_model_request_gate(&url).await.unwrap_err(),
+        "模型请求校验尚未就绪，远程操作未发送，请稍后重试"
+    );
+    received.await.unwrap();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    fixture.abort();
+    let _ = fixture.await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn state_updates_coalesce_without_delaying_terminal_or_approval_changes() {
     let start = tokio::time::Instant::now();

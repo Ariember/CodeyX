@@ -9,6 +9,7 @@ use super::protocol;
 
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 pub(super) const UNCERTAIN: &str = "桌面响应中断或超时，操作可能已提交；请先查看会话，不要重复发送";
+pub(super) const OWNER_UNAVAILABLE: &str = "尚未取得桌面会话，请点击重新连接以在电脑中打开会话";
 
 trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
@@ -106,7 +107,7 @@ impl Desktop {
             Ok::<_, String>(())
         })
         .await
-        .map_err(|_| "尚未取得桌面会话，请点击重新连接以在电脑中打开会话")??;
+        .map_err(|_| OWNER_UNAVAILABLE)??;
         Ok(desktop)
     }
 
@@ -287,8 +288,22 @@ impl Desktop {
         Ok(true)
     }
 
-    pub async fn action(&mut self, action: &str, args: &Value) -> Result<Value, String> {
+    pub async fn action(
+        &mut self,
+        action: &str,
+        args: &Value,
+        request_gate: impl std::future::Future<Output = Result<(), String>>,
+    ) -> Result<Value, String> {
         let (method, version, mut params) = action_params(&self.state, action, args)?;
+        // Question replies and plan decisions can resolve to a new model turn too.
+        if matches!(
+            method,
+            "thread-follower-start-turn"
+                | "thread-follower-steer-turn"
+                | "thread-follower-update-thread-settings"
+        ) {
+            request_gate.await?;
+        }
         params["conversationId"] = json!(self.thread);
         let result = self
             .request(method, version, params, action != "history")
@@ -756,6 +771,105 @@ mod tests {
         stream.write_all(&bytes).await.unwrap();
     }
 
+    fn action_fixture(state: Value) -> (Desktop, tokio::io::DuplexStream) {
+        let (client, server) = tokio::io::duplex(8192);
+        (
+            Desktop {
+                stream: Box::new(client),
+                buffer: Vec::new(),
+                outgoing: Vec::new(),
+                written: 0,
+                client: Some("mobile".into()),
+                owner: Some("owner".into()),
+                thread: "t".into(),
+                state,
+                revision: None,
+                projection: Default::default(),
+                urgent: true,
+            },
+            server,
+        )
+    }
+
+    #[tokio::test]
+    async fn unverified_model_actions_send_no_desktop_request_including_replies() {
+        let active = json!({"id":"t","turns":[{"turnId":"turn","status":"inProgress","items":[{"id":"q","type":"agentMessage","questions":[{"title":"如何连接？","options":["外网"]}]}]}]});
+        let question = protocol::async_requests(&active).remove(0);
+        let question_id = question["params"]["questions"][0]["id"].as_str().unwrap();
+        let message = json!({"text":"test","requestId":Uuid::new_v4().to_string()});
+        for (state, action, args) in [
+            (json!({"id":"t"}), "send", message.clone()),
+            (active.clone(), "steer", message),
+            (
+                json!({"id":"t"}),
+                "settings",
+                json!({"model":"route/model"}),
+            ),
+            (
+                active,
+                "respond",
+                json!({"approvalId":question["id"],"requestId":Uuid::new_v4().to_string(),"answers":{question_id:"外网"}}),
+            ),
+            (
+                json!({"id":"t","latestModel":"route/model","requests":[{"id":5,"method":"item/plan/requestImplementation","params":{"planContent":"运行测试"}}]}),
+                "respond",
+                json!({"approvalId":5,"requestId":Uuid::new_v4().to_string(),"decision":"implement"}),
+            ),
+        ] {
+            let (mut desktop, mut server) = action_fixture(state);
+            let error = desktop
+                .action(action, &args, async { Err("gate unavailable".into()) })
+                .await
+                .unwrap_err();
+            assert_eq!(error, "gate unavailable", "{action}");
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), server.read_u8())
+                    .await
+                    .is_err(),
+                "unverified {action} wrote an IPC request"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn history_stop_and_approval_do_not_poll_the_model_gate() {
+        for (state, action, args, expected_method) in [
+            (
+                json!({"id":"t"}),
+                "history",
+                json!({}),
+                "thread-follower-load-complete-history",
+            ),
+            (
+                json!({"id":"t","turns":[{"turnId":"turn","status":"inProgress"}]}),
+                "interrupt",
+                json!({"turnId":"turn"}),
+                "thread-follower-interrupt-turn",
+            ),
+            (
+                json!({"id":"t","requests":[{"id":7,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["decline"]}}]}),
+                "respond",
+                json!({"approvalId":7,"decision":"decline"}),
+                "thread-follower-command-approval-decision",
+            ),
+        ] {
+            let (mut desktop, mut server) = action_fixture(state);
+            let response = tokio::spawn(async move {
+                let request = read_frame(&mut server).await;
+                assert_eq!(request["method"], expected_method);
+                write_frame(&mut server, json!({"type":"response","requestId":request["requestId"],"resultType":"success","result":{"status":"accepted"}})).await;
+            });
+            let result = desktop
+                .action(action, &args, async {
+                    panic!("the model gate must not run")
+                })
+                .await
+                .unwrap();
+            assert_eq!(result["status"], "accepted");
+            response.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn follows_desktop_owner_and_sends_to_original_workspace() {
         let (client, mut server) = tokio::io::duplex(8192);
@@ -799,7 +913,8 @@ mod tests {
             desktop
                 .action(
                     "send",
-                    &json!({"text":"test","images":[{"url":"data:image/gif;base64,R0lGODlh"}],"requestId":Uuid::new_v4().to_string()})
+                    &json!({"text":"test","images":[{"url":"data:image/gif;base64,R0lGODlh"}],"requestId":Uuid::new_v4().to_string()}),
+                    async { Ok(()) },
                 )
                 .await
                 .unwrap()["status"],

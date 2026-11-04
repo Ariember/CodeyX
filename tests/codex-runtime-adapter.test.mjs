@@ -79,6 +79,90 @@ function moduleClientFixture({ registry = false, hostId = "local" } = {}) {
   return { ...runtime, module, scope, manager, Client };
 }
 
+test("request gate discovery reads data fields without evaluating unknown React getters", async () => {
+  const { scope, manager } = moduleClientFixture();
+  let getterCalls = 0;
+  const decoy = Object.defineProperties({}, {
+    get: { enumerable: true, get() { getterCalls += 1; return () => {}; } },
+    nested: { enumerable: true, get() { getterCalls += 1; return scope; } },
+  });
+  class Element {}
+  const root = new Element();
+  root.__reactFiber$fixture = { memoizedProps: { decoy, scope } };
+  const runtime = fixture({
+    HTMLElement: Element,
+    document: { scripts: [], querySelectorAll: () => [], querySelector: () => root },
+  });
+  runtime.load();
+  vm.runInNewContext(readFileSync(new URL("../public/model-request-gate.js", import.meta.url), "utf8"), { window: runtime.window });
+  const gate = runtime.window.__codeyCreateModelRequestGate({
+    rewriteRequest: (method, params) => ({ method, params: { ...params, checked: true } }),
+  });
+  assert.equal(await gate.ensure(), true);
+  assert.equal(manager.requestClient.enqueueRequest("thread/start", {}).params.checked, true);
+  assert.equal(getterCalls, 0);
+  gate.dispose();
+});
+
+test("one request-client discovery shares its graph budget across every React ancestor", async () => {
+  let inspections = 0;
+  const branch = () => new Proxy({ children: Array.from({ length: 6 }, () => ({})) }, {
+    ownKeys(target) { inspections += 1; return Reflect.ownKeys(target); },
+  });
+  let fiber = null;
+  for (let index = 0; index < 24; index += 1) {
+    fiber = { memoizedProps: { noise: Array.from({ length: 120 }, branch) }, return: fiber };
+  }
+  class Element {}
+  const root = new Element();
+  root.__reactFiber$fixture = fiber;
+  const runtime = fixture({
+    HTMLElement: Element,
+    document: { scripts: [], querySelectorAll: () => [], querySelector: () => root },
+  });
+  runtime.load();
+  await assert.rejects(runtime.window.__codeyLoadCodexRequestClient(), /模型请求校验/);
+  assert.ok(inspections > 0 && inspections <= 2_400, `shared budget inspected ${inspections} branches`);
+  assert.equal(runtime.timers.size, 0);
+});
+
+for (const topology of ["wide earlier ancestors", "a shared object reached at different depths"]) {
+  test(`request gate discovery still reaches the provider after ${topology}`, async () => {
+    const { scope, manager } = moduleClientFixture();
+    let roots;
+    if (topology === "wide earlier ancestors") {
+      roots = [
+        ...Array.from({ length: 4 }, () => ({
+          noise: Array.from({ length: 120 }, () => ({
+            children: Array.from({ length: 120 }, () => ({})),
+          })),
+        })),
+        { scope },
+      ];
+    } else {
+      const shared = { nested: { scope } };
+      let deep = shared;
+      for (let index = 0; index < 6; index += 1) deep = { child: deep };
+      roots = [deep, shared];
+    }
+    class Element {}
+    const root = new Element();
+    root.__reactFiber$fixture = roots.reduceRight((parent, memoizedProps) => ({ memoizedProps, return: parent }), null);
+    const runtime = fixture({
+      HTMLElement: Element,
+      document: { scripts: [], querySelectorAll: () => [], querySelector: () => root },
+    });
+    runtime.load();
+    vm.runInNewContext(readFileSync(new URL("../public/model-request-gate.js", import.meta.url), "utf8"), { window: runtime.window });
+    const gate = runtime.window.__codeyCreateModelRequestGate({
+      rewriteRequest: (method, params) => ({ method, params: { ...params, checked: true } }),
+    });
+    assert.equal(await gate.ensure(), true);
+    assert.equal(manager.requestClient.enqueueRequest("thread/start", {}).params.checked, true);
+    gate.dispose();
+  });
+}
+
 for (const registry of [false, true]) {
   test(`model routing finds the ${registry ? "exported registry" : "cached signal"} before React mounts`, async () => {
     const runtime = moduleClientFixture({ registry });
@@ -209,6 +293,10 @@ test("installation only registers the native adapter and is idempotent", () => {
 
 test("usage, MCP reload and remote resume do not require session UI", async () => {
   const runtime = fixture();
+  runtime.window.__codeyModelWhitelistPatch = {
+    ensureRequestGate: async () => true,
+    requestGateReady: () => true,
+  };
   const calls = [];
   const limits = { rateLimits: { primary: { usedPercent: 25 } } };
   runtime.window.__codeyCodexSessionController = { manager: {
@@ -229,6 +317,29 @@ test("usage, MCP reload and remote resume do not require session UI", async () =
   assert.equal(calls[2].params.conversationId, "thread-1");
   assert.equal(runtime.window.__codeyPageCapabilities.usage.status, "available");
   assert.equal(runtime.window.__codeySessionToolsInstall, undefined);
+  assert.equal(runtime.timers.size, 0);
+});
+
+test("a hanging request gate times out without resuming the native conversation", async () => {
+  const runtime = fixture();
+  let finish;
+  let calls = 0;
+  runtime.window.__codeyModelWhitelistPatch = {
+    ensureRequestGate: () => new Promise(resolve => { finish = resolve; }),
+    requestGateReady: () => true,
+  };
+  runtime.window.__codeyCodexSessionController = { manager: {
+    async resumeConversation() { calls += 1; return { status: "ready" }; },
+  } };
+  runtime.load();
+  const pending = runtime.window.__codeyRemoteControl({ action: "resume", threadId: "thread" }, Date.now() + 60_000);
+  await settle();
+  const rejected = assert.rejects(pending, /模型线路尚未就绪/);
+  for (const callback of runtime.timers.values()) callback();
+  await rejected;
+  finish(true);
+  await settle();
+  assert.equal(calls, 0);
   assert.equal(runtime.timers.size, 0);
 });
 

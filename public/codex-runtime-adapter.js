@@ -1,7 +1,7 @@
 // Codex's private desktop interfaces live behind this adapter. Installing it
 // does not mount controls, observe the DOM, or start background polling.
 (() => {
-  const version = 5;
+  const version = 7;
   const previous = window.__codeyNativeRuntime;
   if (previous?.version === version && previous.isActive?.()) return;
   previous?.dispose?.();
@@ -146,11 +146,12 @@
     return key ? element[key] : null;
   };
 
-  const collectAppServerScopeCandidates = (root, candidates, seen) => {
-    const queue = [{ depth: 0, value: root }];
+  const collectAppServerScopeCandidates = (roots, candidates) => {
+    const queue = roots.filter(Boolean).map((value) => ({ depth: 0, value }));
+    const seen = new WeakSet();
     let cursor = 0;
     let inspected = 0;
-    while (cursor < queue.length && inspected < 600 && candidates.length < 48) {
+    while (cursor < queue.length && inspected < 2_400 && candidates.length < 48) {
       const { depth, value } = queue[cursor];
       cursor += 1;
       if (
@@ -166,14 +167,7 @@
       } catch {
         continue;
       }
-      const hasFunction = (name) => {
-        if (typeof descriptors[name]?.value === "function") return true;
-        try {
-          return typeof value[name] === "function";
-        } catch {
-          return false;
-        }
-      };
+      const hasFunction = (name) => Boolean(declaredMethod(value, name));
       if (
         hasFunction("get")
         && hasFunction("set")
@@ -184,7 +178,7 @@
         candidates.push(value);
       }
       if (depth >= 6) continue;
-      for (const [key, descriptor] of Object.entries(descriptors)) {
+      for (const [key, descriptor] of Object.entries(descriptors).slice(0, 120)) {
         if (
           !Object.prototype.hasOwnProperty.call(descriptor, "value")
           || ["return", "child", "sibling", "alternate", "stateNode", "_owner"].includes(key)
@@ -206,33 +200,29 @@
       document.querySelector("#root"),
       document.body,
     ].filter((element) => element instanceof HTMLElement))].slice(0, 32);
-    const seenScopes = new WeakSet();
     const seenFibers = new WeakSet();
+    const roots = [];
     for (const element of elements) {
       let fiber = reactFiberFromElement(element);
       for (let depth = 0; fiber && depth < 24; depth += 1, fiber = fiber.return) {
         if (seenFibers.has(fiber)) continue;
         seenFibers.add(fiber);
-        const candidates = [];
-        const seenValues = new WeakSet();
-        collectAppServerScopeCandidates(fiber.memoizedState, candidates, seenValues);
-        collectAppServerScopeCandidates(fiber.memoizedProps, candidates, seenValues);
-        collectAppServerScopeCandidates(fiber.dependencies, candidates, seenValues);
-        collectAppServerScopeCandidates(fiber.updateQueue, candidates, seenValues);
-        for (const scope of candidates) {
-          if (seenScopes.has(scope)) continue;
-          seenScopes.add(scope);
-          try {
-            const manager = resolver(scope, "local");
-            if (
-              manager
-              && ["sendRequest", "refreshRecentConversations", "codeyReconcileCompletedConversation"]
-                .some((method) => typeof manager[method] === "function")
-            ) return manager;
-          } catch {
-            continue;
-          }
-        }
+        roots.push(fiber.memoizedState, fiber.memoizedProps, fiber.dependencies, fiber.updateQueue);
+      }
+    }
+    // 从所有 provider 同层开始，噪声状态树不能抢占高层 scope 的发现预算。
+    const candidates = [];
+    collectAppServerScopeCandidates(roots, candidates);
+    for (const scope of candidates) {
+      try {
+        const manager = resolver(scope, "local");
+        if (
+          manager
+          && ["sendRequest", "refreshRecentConversations", "codeyReconcileCompletedConversation"]
+            .some((method) => typeof manager[method] === "function")
+        ) return manager;
+      } catch {
+        continue;
       }
     }
     return null;
@@ -247,11 +237,13 @@
   });
 
   const declaredMethod = (object, name) => {
-    for (let depth = 0; object && depth < 8; depth += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(object, name);
-      if (descriptor) return typeof descriptor.value === "function" ? descriptor.value : null;
-      object = Object.getPrototypeOf(object);
-    }
+    try {
+      for (let depth = 0; object && depth < 8; depth += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, name);
+        if (descriptor) return typeof descriptor.value === "function" ? descriptor.value : null;
+        object = Object.getPrototypeOf(object);
+      }
+    } catch { /* Unknown native proxies are not capability candidates. */ }
     return null;
   };
 
@@ -644,8 +636,28 @@
   // particular, its creation-input reader installs the same tools, project
   // instructions and permission defaults as the desktop composer.
   const remoteControl = async (args, expiresAt) => {
+    const requestGateMessage = "模型线路尚未就绪，部分线路功能暂不可用；请更新或修复 CodeyX 后重试";
+    let requestPatch = null;
     const assertCurrent = () => {
       if (disposed || Date.now() >= expiresAt) throw new Error("远程操作已过期，请检查会话状态");
+      if (requestPatch && (window.__codeyModelWhitelistPatch !== requestPatch
+        || requestPatch.requestGateReady?.() !== true)) throw new Error(requestGateMessage);
+    };
+    const ensureRequestGate = async () => {
+      const patch = window.__codeyModelWhitelistPatch;
+      let ready = false;
+      try {
+        ready = typeof patch?.ensureRequestGate === "function"
+          && await waitForNativeSessionOperation(() => patch.ensureRequestGate()) === true
+          && patch.requestGateReady?.() === true
+          && window.__codeyModelWhitelistPatch === patch;
+      } catch {}
+      assertCurrent();
+      if (!ready) {
+        if (window.__codeyModelWhitelistPatch === patch) patch?.notifyRequestGateUnavailable?.();
+        throw new Error(requestGateMessage);
+      }
+      requestPatch = patch;
     };
     assertCurrent();
     if (args.action === "resume") {
@@ -657,6 +669,8 @@
       assertCurrent();
       // resumeConversation also discovers an owner in another window and
       // follows it. Never steal ownership with a second app-server process.
+      await ensureRequestGate();
+      assertCurrent();
       const result = await manager.resumeConversation({
         conversationId: args.threadId, model: null, serviceTier: null,
         reasoningEffort: null, workspaceRoots: [], collaborationMode: null,
@@ -685,6 +699,8 @@
         serviceTier: tier === "priority" ? "priority" : "default",
       };
     }
+    await ensureRequestGate();
+    assertCurrent();
     const result = await manager.startConversation(args.params, {
       readThreadCreationInputs: async (...values) => {
         assertCurrent();
