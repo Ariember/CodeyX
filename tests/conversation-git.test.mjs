@@ -458,6 +458,35 @@ test("navigation promotes a queued background refresh and ignores its own DOM in
   assert.deepEqual(env.timerDelays(), []);
 });
 
+test("ignores streaming message changes while still reacting to conversation navigation", async () => {
+  const env = harness(); await env.load();
+  const turn = env.document.createElement("section");
+  turn.setAttribute("data-turn-key", "turn-a");
+  const message = env.document.createElement("div");
+  turn.appendChild(message); env.document.body.appendChild(turn);
+  let contextReads = 0;
+  const context = env.window.__codeyPromptOptimize.composerContext;
+  env.window.__codeyPromptOptimize.composerContext = () => { contextReads += 1; return context(); };
+  const statusCalls = () => env.calls.filter((call) => call.path.endsWith("_status")).length;
+  const before = statusCalls();
+  env.mutate([{ type: "childList", target: message, addedNodes: [env.document.createElement("span")], removedNodes: [] }]);
+  await env.runTimers();
+  assert.equal(contextReads, 0);
+  assert.equal(statusCalls(), before);
+  env.state.sessionId = "session-b";
+  env.mutate([{ type: "attributes", target: env.host, attributeName: "data-above-composer-conversation-id" }]);
+  await env.runTimers();
+  assert.equal(env.calls.at(-1).payload.sessionId, "session-b");
+});
+
+test("does not inspect the composer for mutations while disabled", async () => {
+  const env = harness({ enabled: false }); await env.load();
+  let contextReads = 0;
+  env.window.__codeyPromptOptimize.composerContext = () => { contextReads += 1; return null; };
+  env.mutate(); await env.runTimers();
+  assert.equal(contextReads, 0);
+});
+
 test("resumes the current conversation check after an old preview finishes", async () => {
   const pending = deferred();
   const env = harness({ preview: () => pending.promise }); await env.load();

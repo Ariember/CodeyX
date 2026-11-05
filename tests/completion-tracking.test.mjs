@@ -398,6 +398,7 @@ test("reconciles when the conversation appears after renderer startup", async ()
     addedNodes: [],
     removedNodes: [],
   }]);
+  runtime.flushTimers();
   await flushMicrotasks();
 
   assert.deepEqual(events.map((event) => event.payload.conversationId), ["session-1"]);
@@ -1196,6 +1197,7 @@ test("hidden windows skip layout-based session detection until they become visib
 
     runtime.document.visibilityState = "visible";
     runtime.emitMutations([{ type: "childList", target: new FakeElement(), addedNodes: [], removedNodes: [] }]);
+    runtime.flushTimers();
     await flushMicrotasks();
     assert.ok(layoutReads > 0);
     assert.deepEqual(events.map((event) => event.payload.conversationId), ["session-1"]);
@@ -1203,3 +1205,84 @@ test("hidden windows skip layout-based session detection until they become visib
     FakeElement.prototype.getClientRects = getClientRects;
   }
 });
+
+test("mutation bursts defer and coalesce layout-based session checks", async () => {
+  const events = [];
+  const composer = new FakeElement({ "data-above-composer-conversation-id": "session-1" });
+  let layoutReads = 0;
+  composer.getClientRects = () => { layoutReads += 1; return [1]; };
+  const runtime = loadInjection({
+    codexSessionController: createRecoveryController(events),
+    sessionElements: { "[data-above-composer-conversation-id]": [composer] },
+  });
+  await flushMicrotasks();
+  runtime.flushTimers();
+  layoutReads = 0;
+  const mutation = { type: "attributes", attributeName: "class", target: new FakeElement() };
+
+  for (let index = 0; index < 100; index += 1) runtime.emitMutations([mutation]);
+  assert.equal(layoutReads, 0, "observer delivery must not force layout");
+  runtime.flushTimers();
+  await flushMicrotasks();
+  assert.equal(layoutReads, 1, "one deferred check serves the whole mutation burst");
+  assert.equal(events.length, 1, "the existing 15-second throttle still applies");
+
+  composer.setAttribute("data-above-composer-conversation-id", "session-2");
+  runtime.emitMutations([mutation]);
+  assert.equal(layoutReads, 1);
+  runtime.flushTimers();
+  await flushMicrotasks();
+  assert.deepEqual(events.map((event) => event.payload.conversationId), ["session-1", "session-2"]);
+});
+
+test("deferred reconciliation retains its one-second failure retry and normal interval", async () => {
+  let attempts = 0;
+  const runtime = loadInjection({
+    codexSessionController: createRecoveryController([], {
+      async reconcileCompletedConversation() {
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary native failure");
+        return true;
+      },
+    }),
+  });
+  await flushMicrotasks();
+  assert.equal(attempts, 1);
+  const check = async () => {
+    runtime.emitMutations([{ type: "childList", target: new FakeElement(), addedNodes: [], removedNodes: [] }]);
+    runtime.flushTimers();
+    await flushMicrotasks();
+  };
+  runtime.advanceTime(999);
+  await check();
+  assert.equal(attempts, 1);
+  runtime.advanceTime(1);
+  await check();
+  assert.equal(attempts, 2);
+  runtime.advanceTime(14_999);
+  await check();
+  assert.equal(attempts, 2);
+  runtime.advanceTime(1);
+  await check();
+  assert.equal(attempts, 3);
+});
+
+for (const state of ["hidden", "disposed"]) {
+  test(`a queued session check skips layout after the installation becomes ${state}`, async () => {
+    const composer = new FakeElement({ "data-above-composer-conversation-id": "session-1" });
+    const runtime = loadInjection({
+      codexSessionController: createRecoveryController([]),
+      sessionElements: { "[data-above-composer-conversation-id]": [composer] },
+    });
+    await flushMicrotasks();
+    runtime.flushTimers();
+    let layoutReads = 0;
+    composer.getClientRects = () => { layoutReads += 1; return [1]; };
+    runtime.emitMutations([{ type: "attributes", attributeName: "class", target: new FakeElement() }]);
+    if (state === "hidden") runtime.document.visibilityState = "hidden";
+    else runtime.window.__codeySessionToolsInstall.dispose();
+    runtime.flushTimers();
+    await flushMicrotasks();
+    assert.equal(layoutReads, 0);
+  });
+}

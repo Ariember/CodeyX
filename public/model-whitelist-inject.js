@@ -1,6 +1,6 @@
 // Keep Codex's native model allowlist aligned with the current CodeyX channel.
 (() => {
-  const patchVersion = "71";
+  const patchVersion = "72";
   const nativeSelectionOnly = window.__codeyNativeModelSelectionOnly === true;
   const officialProviderId = "openai";
   const localRouterProviderId = "codey_router";
@@ -106,6 +106,8 @@
   let originalDispatchEvent = null;
   let patchedDispatchEvent = null;
   let groupedMenuTimer = 0;
+  let interactionDeliveryTimer = 0;
+  let interactionDiscoveryPending = false;
   let groupedMenuObserver = null;
   const groupedMenuTextObservers = new Map();
   const subagentModelLabels = new Map();
@@ -1840,6 +1842,8 @@
             value,
             maxKnownModelQueryClients,
           );
+          // The client is the discovery result; its caches are unrelated state.
+          return;
         }
       } catch {
         // Ignore proxy-backed values that reject capability probes.
@@ -1890,7 +1894,8 @@
 
   const scanReactObjectGraphWhenDue = (forceScan = false, discover = false) => {
     const now = Date.now();
-    const runFullScan = forceScan || now >= nextFullReactDiscoveryAt;
+    const runFullScan = forceScan
+      || (knownModelQueryClients.size === 0 && now >= nextFullReactDiscoveryAt);
     if (!runFullScan && knownModelQueryClients.size === 0 && !discover) {
       return { queryClients: [], reactContainers: 0 };
     }
@@ -3088,6 +3093,22 @@
   // and focusin is far more often than that safety net needs.
   let lastInteractionApply = 0;
   const interactionApplyIntervalMs = 2_000;
+  const scheduleInteractionModelDelivery = (discover) => {
+    interactionDiscoveryPending ||= discover;
+    if (interactionDeliveryTimer) return;
+    // Coalesce pointer, focus and click events without blocking native input.
+    interactionDeliveryTimer = window.setTimeout(() => withModelPresentation(() => {
+      interactionDeliveryTimer = 0;
+      const discoverQueryClients = interactionDiscoveryPending;
+      interactionDiscoveryPending = false;
+      if (!discoverQueryClients) {
+        if (applyModelWhitelist()) notifyStatsigClients();
+        return;
+      }
+      void deliverModelCatalog({ discoverQueryClients, invalidate: false })
+        .catch(() => console.warn("[CodeyX] interaction model delivery failed"));
+    }), 60);
+  };
   const handleInteraction = (event) => withModelPresentation(() => {
     const pickerInteraction = Boolean(
       event?.target?.closest?.(`${groupedMenuSelector}, [aria-haspopup]`),
@@ -3107,14 +3128,9 @@
     const now = Date.now();
     if (!pickerInteraction && now - lastInteractionApply < interactionApplyIntervalMs) return;
     lastInteractionApply = now;
-    // A new or reopened task can mount a fresh QueryClient while the previous
-    // client remains callable. Probe the current React roots on picker
-    // interaction so the visible cache is repaired immediately without the
-    // expensive full-document discovery pass.
-    void deliverModelCatalog({
-      discoverQueryClients: true,
-      invalidate: false,
-    });
+    // Reopened tasks can replace a still-callable QueryClient; discover the
+    // current roots after picker input, never on ordinary sidebar/send clicks.
+    scheduleInteractionModelDelivery(pickerInteraction);
   });
   const handleFocus = () => {
     void loadModelCatalog();
@@ -3123,6 +3139,7 @@
     const cleanups = [
       restoreNativeFastPermissions,
       () => window.clearTimeout(groupedMenuTimer),
+      () => window.clearTimeout(interactionDeliveryTimer),
       () => window.clearTimeout(providerMismatchNoticeTimer),
       () => document.getElementById?.("codey-provider-mismatch-notice")?.remove?.(),
       () => groupedMenuObserver?.disconnect?.(),
@@ -3134,6 +3151,8 @@
     // A changed DOM or one broken observer must not prevent other cleanup.
     for (const cleanup of cleanups) { try { cleanup(); } catch {} }
     groupedMenuTimer = 0;
+    interactionDeliveryTimer = 0;
+    interactionDiscoveryPending = false;
     providerMismatchNoticeTimer = 0;
     groupedMenuObserver = null;
     groupedMenuTextObservers.clear();

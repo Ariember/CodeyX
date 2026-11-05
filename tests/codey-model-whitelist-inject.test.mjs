@@ -610,6 +610,15 @@ async function loadPatch(
       await Promise.resolve();
       await Promise.resolve();
     },
+    async runPendingTimers() {
+      for (const [id, callback] of [...timers]) {
+        if (!timers.delete(id)) continue;
+        callback();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+    },
   };
 }
 
@@ -1035,7 +1044,7 @@ test("a backend-pushed catalog updates immediately without a nested bridge reque
   const { patch } = runtime;
   const eventsBeforePush = client.events.length;
 
-  assert.equal(patch.version, "71");
+  assert.equal(patch.version, "72");
   assert.equal(await patch.setCatalog({
     status: "ok",
     models: ["gpt-5.6-sol", "provider-hot-pushed"],
@@ -4140,6 +4149,99 @@ test("query client discovery reaches deep provider stacks", async () => {
   runtime.patch.dispose();
 });
 
+test("query discovery stops at a recognized client instead of walking its caches", async () => {
+  const queryClient = activeModelQueryClient(["stale"]);
+  let cacheVisits = 0;
+  queryClient.cache = new Proxy({}, {
+    ownKeys() { cacheVisits += 1; return []; },
+  });
+  const runtime = await loadPatch({
+    status: "ok", models: ["current"], default_model: "current",
+  }, [statsigClient()], { queryClient });
+
+  assert.deepEqual(queryClient.models(), ["current"]);
+  assert.equal(cacheVisits, 0);
+  runtime.patch.dispose();
+});
+
+test("picker event bursts discover replacement clients once after the input handlers return", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const body = new FakeElementCore("body");
+  const modelButton = body.appendChild(new FakeElementCore("button", {
+    attributes: { "aria-haspopup": "menu" },
+  }));
+  const firstClient = activeModelQueryClient(["old"]);
+  const nextClient = activeModelQueryClient(["old"]);
+  const runtime = await loadPatch({
+    status: "ok", models: ["current"], default_model: "current",
+  }, [statsigClient()], { documentBody: body, queryClient: firstClient });
+  now += 20_000;
+  let graphVisits = 0;
+  body.__reactFiber$codeyTest = new Proxy({ memoizedProps: { queryClient: nextClient } }, {
+    ownKeys(target) { graphVisits += 1; return Reflect.ownKeys(target); },
+  });
+
+  for (const type of ["pointerdown", "focusin", "click"]) {
+    runtime.dispatchDocumentEvent(type, { target: modelButton });
+    assert.equal(graphVisits, 0, `${type} must leave graph discovery out of the input handler`);
+  }
+  await runtime.runPendingTimers();
+  assert.equal(graphVisits, 1);
+  assert.deepEqual(nextClient.models(), ["current"]);
+  assert.equal(runtime.wildcardScanCount(), 1);
+
+  graphVisits = 0;
+  runtime.dispatchDocumentEvent("pointerdown", { target: modelButton });
+  runtime.patch.dispose();
+  await runtime.runPendingTimers();
+  assert.equal(graphVisits, 0, "disposing cancels queued discovery");
+});
+
+test("deferred discovery replaces and evicts a failed cached client", async () => {
+  const body = new FakeElementCore("body");
+  const modelButton = body.appendChild(new FakeElementCore("button", {
+    attributes: { "aria-haspopup": "menu" },
+  }));
+  const oldClient = activeModelQueryClient(["old"]);
+  const catalog = { status: "ok", models: ["current"], default_model: "current" };
+  const runtime = await loadPatch(catalog, [statsigClient()], { documentBody: body, queryClient: oldClient });
+  let failedReads = 0;
+  oldClient.getQueriesData = () => { failedReads += 1; throw new Error("client disposed"); };
+  const nextClient = activeModelQueryClient(["old"]);
+  body.__reactFiber$codeyTest = { memoizedProps: { queryClient: nextClient } };
+
+  runtime.dispatchDocumentEvent("pointerdown", { target: modelButton });
+  await runtime.runPendingTimers();
+  assert.deepEqual(nextClient.models(), ["current"]);
+  assert.equal(failedReads, 1);
+  await runtime.patch.setCatalog(catalog);
+  assert.equal(failedReads, 1, "failed clients are not retained for later deliveries");
+  runtime.patch.dispose();
+});
+
+test("ordinary clicks do not discover new React query clients", async () => {
+  const body = new FakeElementCore("body");
+  const sendButton = body.appendChild(new FakeElementCore("button"));
+  const nextClient = activeModelQueryClient(["old"]);
+  const runtime = await loadPatch({
+    status: "ok", models: ["current"], default_model: "current",
+  }, [statsigClient()], { documentBody: body, queryClient: activeModelQueryClient(["old"]) });
+  let graphVisits = 0;
+  body.__reactFiber$codeyTest = new Proxy({ memoizedProps: { queryClient: nextClient } }, {
+    ownKeys(target) { graphVisits += 1; return Reflect.ownKeys(target); },
+  });
+
+  for (const type of ["pointerdown", "focusin", "click"]) {
+    runtime.dispatchDocumentEvent(type, { target: sendButton });
+  }
+  await runtime.runPendingTimers();
+  assert.equal(graphVisits, 0);
+  assert.deepEqual(nextClient.models(), ["old"]);
+  assert.equal(runtime.wildcardScanCount(), 1);
+  runtime.patch.dispose();
+});
+
 test("reopening the model picker discovers each replacement QueryClient", async () => {
   const routeModel = "tokenrouter/z-ai/glm-5.3-free";
   const body = new FakeElementCore("body");
@@ -4161,16 +4263,15 @@ test("reopening the model picker discovers each replacement QueryClient", async 
   };
 
   runtime.dispatchDocumentEvent("pointerdown", { target: modelButton });
-  await Promise.resolve();
-  await Promise.resolve();
+  await runtime.runPendingTimers();
 
   assert.deepEqual(replacementQueryClient.models(), ["gpt-5.6-sol", routeModel]);
-  body.__reactFiber$codeyTest = {
+  const menu = body.appendChild(new FakeElementCore("div", { attributes: { role: "menu" } }));
+  menu.__reactFiber$codeyTest = {
     memoizedProps: { queryClient: secondReplacementQueryClient },
   };
   runtime.dispatchDocumentEvent("pointerdown", { target: modelButton });
-  await Promise.resolve();
-  await Promise.resolve();
+  await runtime.runPendingTimers();
 
   assert.deepEqual(secondReplacementQueryClient.models(), ["gpt-5.6-sol", routeModel]);
   assert.equal(
@@ -4209,8 +4310,7 @@ test("native selection ignores non-picker interactions before discovering QueryC
   assert.deepEqual(replacementQueryClient.models(), ["gpt-5.6-sol"]);
 
   runtime.dispatchDocumentEvent("pointerdown", { target: modelButton });
-  await Promise.resolve();
-  await Promise.resolve();
+  await runtime.runPendingTimers();
   assert.deepEqual(replacementQueryClient.models(), models);
   runtime.patch.dispose();
 });

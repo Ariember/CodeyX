@@ -1193,10 +1193,10 @@
     }
   };
   const schedule = () => {
+    if (!enabled) return;
     // 导航时立即清理旧状态，当前会话优先查询；普通变化合并处理。
     const previous = sessionId;
     syncContext();
-    if (!enabled) return;
     const delay = previous !== sessionId || status === null ? 0 : 300;
     if (timer) {
       if (delay >= timerDelay) return;
@@ -1241,6 +1241,8 @@
     if (mutations.some((mutation) => {
       if (ownNode(mutation.target)) return false;
       if (!button.isConnected && [...(mutation.removedNodes || [])].includes(button)) return true;
+      const turn = mutation.target?.closest?.("[data-turn-key]");
+      if (mutation.type === "childList" && turn && turn.isConnected !== false) return false;
       const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
       return !nodes.length || nodes.some((node) => !ownNode(node));
     })) scheduleInFrame();

@@ -1247,6 +1247,49 @@ test("ignores unrelated DOM mutations while the composer remains connected", asy
   assert.equal(env.getComposerQueryCount(), queryCount);
 });
 
+test("coalesces observer text reads without forcing layout during mutation delivery", async () => {
+  const env = createEnvironment({ anchors: false, newChatComposer: true });
+  await flush();
+  const button = env.getElementById("codey-prompt-optimize-button");
+  let reads = 0;
+  let text = "draft";
+  Object.defineProperty(env.newChatInput, "innerText", {
+    get() { reads += 1; return text; },
+  });
+  const mutation = { type: "childList", target: env.newChatInput, addedNodes: [], removedNodes: [] };
+  for (let index = 0; index < 100; index += 1) env.emitMutation([mutation]);
+  assert.equal(reads, 0, "innerText can force layout and must stay outside observer delivery");
+  await flush();
+  assert.equal(reads, 1);
+  assert.equal(button.disabled, false);
+
+  let writes = 0;
+  const setAttribute = button.setAttribute.bind(button);
+  button.setAttribute = (...args) => { writes += 1; return setAttribute(...args); };
+  env.emitMutation([mutation]);
+  await flush();
+  assert.equal(writes, 0, "unchanged button state must not wake DOM observers again");
+  text = " \n ";
+  env.emitMutation([mutation]);
+  await flush();
+  assert.equal(button.disabled, true);
+});
+
+test("disabling prompt optimization cancels a queued observer text read", async () => {
+  const env = createEnvironment({ anchors: false, newChatComposer: true });
+  await flush();
+  let reads = 0;
+  Object.defineProperty(env.newChatInput, "innerText", {
+    get() { reads += 1; return "draft"; },
+  });
+  env.emitMutation([{ type: "childList", target: env.newChatInput, addedNodes: [], removedNodes: [] }]);
+  env.setConfig({ promptOptimization: { enabled: false } });
+  env.emitConfigChanged();
+  await flush();
+  assert.equal(reads, 0);
+  assert.equal(env.getElementById("codey-prompt-optimize-button").style.display, "none");
+});
+
 test("clicking the button calls the bridge and replaces the composer text", async () => {
   const env = createEnvironment({
     enabled: true,

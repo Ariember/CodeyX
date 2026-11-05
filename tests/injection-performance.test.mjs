@@ -158,6 +158,8 @@ test("renderer core loads session tools after idle time or sidebar use", async (
   )?.[1] ?? "";
   assert.match(sessionObserverBody, /addPendingScanRoot\(threadRow\)/);
   assert.match(sessionObserverBody, /reconcileStaleCompletedTask/);
+  assert.doesNotMatch(sessionObserverBody, /getSessionId\(/);
+  assert.match(sessionObserverBody, /completionReconcileTimer = window\.setTimeout\(/);
   assert.match(sessionTools, /mutationDispatcher\.subscribe\(\s*handleSessionToolMutations/);
   assert.match(sessionTools, /new MutationObserver\(handleSessionToolMutations\)/);
   assert.match(promptOptimize, /mutationDispatcher\.subscribe\(\s*handleComposerMutations/);

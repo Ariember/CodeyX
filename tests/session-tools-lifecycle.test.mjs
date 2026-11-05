@@ -198,7 +198,7 @@ test("failed installation releases registered resources and can be loaded again"
   assert.equal(runtime.intervals.size, 2);
 });
 
-test("dispose cancels scan, watcher, sidebar tooltip and running recheck timers", () => {
+test("dispose cancels scan, session check, watcher, sidebar tooltip and running recheck timers", () => {
   const runtime = fixture();
   const { row, spinner } = thread(runtime.document, "thread-1", true);
   runtime.load();
@@ -216,6 +216,7 @@ test("dispose cancels scan, watcher, sidebar tooltip and running recheck timers"
   button.dispatchEvent({ type: "mouseenter" });
   const delays = [...runtime.timeouts.values()].map(({ delay }) => delay);
   for (const delay of [40, 60, 400, 2_000, 30_000]) assert.ok(delays.includes(delay), `missing ${delay} timer`);
+  assert.equal(delays.filter((delay) => delay === 60).length, 2, "both scan and session check must be queued");
   const callbacks = [...runtime.timeouts.values()].map(({ callback }) => callback);
   runtime.window.__codeySessionToolsInstall.dispose();
   const queries = runtime.queries();

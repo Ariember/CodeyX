@@ -55,6 +55,7 @@
   const sidebarTitleCache = new Map();
   let watcherWakeTimer = 0;
   let completionReconcileInFlight = false;
+  let completionReconcileTimer = 0;
   let completionNextReconcileAt = 0;
   let completionReconcileSessionId = "";
   let sidebarActionTooltipTimer = 0;
@@ -2038,18 +2039,12 @@
     if (pendingScanRoots.size) {
       scheduleIncrementalScan(null);
     }
-    if (document.visibilityState === "hidden") return;
-    const sessionId = getSessionId();
-    if (
-      sessionId
-      && !completionReconcileInFlight
-      && (
-        sessionId !== completionReconcileSessionId
-        || Date.now() >= completionNextReconcileAt
-      )
-    ) {
+    if (document.visibilityState === "hidden" || completionReconcileInFlight || completionReconcileTimer) return;
+    // Coalesce layout reads outside observer delivery without postponing navigation checks.
+    completionReconcileTimer = window.setTimeout(() => {
+      completionReconcileTimer = 0;
       void reconcileStaleCompletedTask();
-    }
+    }, scanDebounceMs);
   };
   const sessionToolMutationOptions = {
     attributes: true,
@@ -2087,7 +2082,7 @@
       try { target.removeEventListener?.(type, handler, options); } catch {}
     }
     for (const id of installedIntervals) window.clearInterval?.(id);
-    for (const id of [scanTimer, watcherWakeTimer, threadUpdatedAtFetchTimer]) {
+    for (const id of [scanTimer, watcherWakeTimer, threadUpdatedAtFetchTimer, completionReconcileTimer]) {
       window.clearTimeout(id);
     }
     if (initialScanUsesIdleCallback) window.cancelIdleCallback?.(initialScanHandle);

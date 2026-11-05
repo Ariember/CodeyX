@@ -63,6 +63,7 @@
   };
   let scanTimer = 0;
   let scanTimerDelay = 0;
+  let buttonStateTimer = 0;
   let repositionTimer = 0;
   let configLoadTimer = 0;
   let configLoadBackoffMs = 120;
@@ -609,6 +610,9 @@
     if (!button) return;
     const empty = !readComposerText().trim();
     const disabled = busy || empty;
+    if (button.disabled === disabled
+      && button.dataset.busy === String(busy)
+      && button.dataset.empty === String(empty)) return;
     button.disabled = disabled;
     button.dataset.busy = String(busy);
     button.dataset.empty = String(empty);
@@ -940,7 +944,11 @@
         continue;
       }
       if (mutationInsideTrackedInput(mutation)) {
-        updateButtonState();
+        // innerText may force layout; read it once after the mutation burst.
+        if (!buttonStateTimer) buttonStateTimer = setTimeout(() => {
+          buttonStateTimer = 0;
+          if (enabled) updateButtonState();
+        }, 0);
         if (isPlainTrackedInputMutation(mutation)) continue;
       }
       if (
@@ -1018,8 +1026,10 @@
     }
 
     disconnectComposerObserver();
+    clearTimeout(buttonStateTimer);
     clearTimeout(scanTimer);
     clearTimeout(repositionTimer);
+    buttonStateTimer = 0;
     scanTimer = 0;
     repositionTimer = 0;
     refreshButton();
