@@ -1,7 +1,7 @@
 // CLI-only launches cannot install the main-process startup patch. Operate on
 // the native shared instances instead; keep application and voice RPCs intact.
 (() => {
-  const version = 2;
+  const version = 3;
   const slimPet = ["__CODEY_SLIM_PET__"][0] === "true";
   const previous = window.__codeyRuntimeOptimizations;
   if (previous?.version === version && previous.slimPet === slimPet && previous.isActive?.()) return;
@@ -19,21 +19,22 @@
   let suppressedPrewarms = 0;
   const document = window.document;
   const checkedStyleSheets = new WeakSet();
-  const markedTabs = new Set();
+  const markedTabs = new Map();
   const tabsAttribute = "data-app-shell-tabs";
   const expandedAttribute = "data-browser-sidebar-chrome-expanded";
   const expandedMarker = "data-codey-sidebar-expanded";
   const tabsSelector = `[${tabsAttribute}="true"]`;
   const expandedSelector = `[${expandedAttribute}="true"]`;
+  const titlebarStateSelector = `${tabsSelector}, ${expandedSelector}`;
   const nativeTitlebarSelector = `[data-codex-window-type="electron"] :is([data-app-shell-titlebar], ${tabsSelector}:has(${expandedSelector})) [data-app-shell-tab-strip-controller]`;
   let titlebarObserver = null;
 
   const syncTabs = (tabs) => {
     const expanded = tabs.isConnected && tabs.matches(tabsSelector)
-      && tabs.querySelector(expandedSelector) !== null;
+      && tabs.querySelector(expandedSelector);
     if (expanded) {
       if (tabs.getAttribute(expandedMarker) !== "true") tabs.setAttribute(expandedMarker, "true");
-      markedTabs.add(tabs);
+      markedTabs.set(tabs, expanded);
     } else if (markedTabs.delete(tabs) && tabs.getAttribute(expandedMarker) === "true") {
       tabs.removeAttribute(expandedMarker);
     }
@@ -43,20 +44,30 @@
     if (!document || typeof window.MutationObserver !== "function") return false;
     titlebarObserver = new window.MutationObserver((records) => {
       const candidates = new Set();
+      const addAncestorTabs = (element) => {
+        for (let tabs = element?.closest(tabsSelector); tabs; tabs = tabs.parentElement?.closest(tabsSelector)) {
+          candidates.add(tabs);
+        }
+      };
       for (const record of records) {
         const target = record.target;
         if (target.nodeType !== 1) continue;
         if (record.attributeName === tabsAttribute) candidates.add(target);
-        for (let tabs = target.closest(tabsSelector); tabs; tabs = tabs.parentElement?.closest(tabsSelector)) {
-          candidates.add(tabs);
-        }
+        if (record.attributeName === expandedAttribute) addAncestorTabs(target.parentElement);
         for (const node of record.addedNodes || []) {
           if (node.nodeType !== 1) continue;
-          if (node.matches(tabsSelector)) candidates.add(node);
-          for (const tabs of node.querySelectorAll(tabsSelector)) candidates.add(tabs);
+          const elements = [...node.querySelectorAll(titlebarStateSelector)];
+          if (node.matches(titlebarStateSelector)) elements.push(node);
+          for (const element of elements) {
+            if (element.matches(tabsSelector)) candidates.add(element);
+            if (element.matches(expandedSelector)) addAncestorTabs(element.parentElement);
+          }
         }
       }
-      for (const tabs of markedTabs) if (!tabs.isConnected) candidates.add(tabs);
+      // Keep one matching descendant so unrelated message/list removals need no subtree scan.
+      for (const [tabs, expanded] of markedTabs) {
+        if (!tabs.isConnected || !tabs.contains(expanded) || !expanded.matches(expandedSelector)) candidates.add(tabs);
+      }
       for (const tabs of candidates) syncTabs(tabs);
     });
     titlebarObserver.observe(document, {
@@ -231,7 +242,7 @@
       for (const restore of restores.reverse()) {
         try { restore(); } catch { /* Do not overwrite native replacements. */ }
       }
-      for (const tabs of markedTabs) {
+      for (const tabs of markedTabs.keys()) {
         if (tabs.getAttribute(expandedMarker) === "true") tabs.removeAttribute(expandedMarker);
       }
       markedTabs.clear();

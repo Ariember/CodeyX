@@ -1,6 +1,6 @@
 // Keep Codex's native model allowlist aligned with the current CodeyX channel.
 (() => {
-  const patchVersion = "73";
+  const patchVersion = "74";
   const nativeSelectionOnly = window.__codeyNativeModelSelectionOnly === true;
   const officialProviderId = "openai";
   const localRouterProviderId = "codey_router";
@@ -1339,13 +1339,11 @@
           continue;
         }
         restoreSupersededModelMenuItem(item);
-        item.dataset.codeyRouteModel = matched.modelName;
-        item.dataset.codeyRouteName = matched.presentation.routeName;
-        item.classList?.add?.("codey-model-route-item");
-        item.setAttribute?.(
-          "aria-label",
-          `${matched.presentation.routeName || matched.presentation.routeLabel} / ${matched.presentation.modelName}`,
-        );
+        if (item.dataset.codeyRouteModel !== matched.modelName) item.dataset.codeyRouteModel = matched.modelName;
+        if (item.dataset.codeyRouteName !== matched.presentation.routeName) item.dataset.codeyRouteName = matched.presentation.routeName;
+        if (!item.classList?.contains?.("codey-model-route-item")) item.classList?.add?.("codey-model-route-item");
+        const ariaLabel = `${matched.presentation.routeName || matched.presentation.routeLabel} / ${matched.presentation.modelName}`;
+        if (item.getAttribute?.("aria-label") !== ariaLabel) item.setAttribute?.("aria-label", ariaLabel);
         replaceTextOnce(
           item,
           matched.menuLabel,

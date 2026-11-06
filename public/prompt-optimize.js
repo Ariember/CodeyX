@@ -844,20 +844,17 @@
       ...(mutation?.addedNodes || []),
       ...(mutation?.removedNodes || []),
     ];
-    const composerScope = document.querySelector(composerAnchorSelector)
-      ?.parentElement;
     if (
       findComposerAnchorNode(mutation?.target) ||
       changedNodes.some(findComposerAnchorNode)
     ) {
       return true;
     }
-    if (
-      mutation?.type === "childList" &&
-      (mutation.target === composerScope ||
-        mutation.target === inputElement?.parentElement)
-    ) {
-      return true;
+    if (mutation?.type === "childList") {
+      const composerScope = document.querySelector(composerAnchorSelector)?.parentElement;
+      if (mutation.target === composerScope || mutation.target === inputElement?.parentElement) {
+        return true;
+      }
     }
     if (
       inputElement &&

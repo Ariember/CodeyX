@@ -189,3 +189,61 @@ test("延迟加载的样式表可修复，跨域表保持原样且不影响清�
   await page.evaluate(() => window.__codeyRuntimeOptimizations.dispose());
   expect(errors).toEqual([]);
 });
+
+test("消息更新和滚动列表换行不重新扫描整个标签页", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    const content = document.createElement("main");
+    content.id = "messages";
+    content.innerHTML = "<p>历史消息</p>".repeat(2_000) + '<div id="stream"></div>';
+    document.getElementById("tabs").appendChild(content);
+  });
+  await install(page);
+  for (const state of [0, 1]) {
+    await setState(page, state);
+    const scans = await page.evaluate(async () => {
+      let scans = 0;
+      const query = Element.prototype.querySelector;
+      Element.prototype.querySelector = function (selector) {
+        if (this.matches('[data-app-shell-tabs="true"]')
+          && selector === '[data-browser-sidebar-chrome-expanded="true"]') scans += 1;
+        return query.call(this, selector);
+      };
+      try {
+        const stream = document.getElementById("stream");
+        for (let index = 0; index < 40; index += 1) {
+          const line = document.createElement("span");
+          line.textContent = `新消息 ${index}`;
+          stream.replaceChildren(line);
+          await Promise.resolve();
+        }
+        return scans;
+      } finally {
+        Element.prototype.querySelector = query;
+      }
+    });
+    expect(scans).toBe(0);
+    await expect(page.locator("[data-codey-sidebar-expanded]")).toHaveCount(state);
+  }
+});
+
+test("展开节点在同一批次取消标记并移除后重新选择有效节点", async ({ page }) => {
+  await open(page);
+  await setState(page, 1);
+  await install(page);
+  await page.evaluate(() => {
+    const tabs = document.getElementById("tabs");
+    const expanded = tabs.querySelector("[data-browser-sidebar-chrome-expanded]");
+    const replacement = expanded.cloneNode();
+    tabs.appendChild(replacement);
+    expanded.removeAttribute("data-browser-sidebar-chrome-expanded");
+    expanded.remove();
+  });
+  await expect(page.locator("#tabs")).toHaveAttribute("data-codey-sidebar-expanded", "true");
+  await page.evaluate(() => {
+    const expanded = document.querySelector('#tabs [data-browser-sidebar-chrome-expanded="true"]');
+    expanded.removeAttribute("data-browser-sidebar-chrome-expanded");
+    expanded.remove();
+  });
+  await expect(page.locator("[data-codey-sidebar-expanded]")).toHaveCount(0);
+});

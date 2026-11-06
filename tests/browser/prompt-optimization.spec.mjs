@@ -44,6 +44,31 @@ test("共享观察器接收输入框文本变化并更新优化按钮", async ({
   await expect(button).toBeDisabled();
   await page.locator("#composer").evaluate(element => { element.firstChild.nodeValue = "updated"; });
   await expect(button).toBeEnabled();
+
+  const queries = await page.evaluate(async () => {
+    const messages = document.createElement("section");
+    messages.textContent = "正在生成回复";
+    document.body.appendChild(messages);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    let queries = 0;
+    const query = document.querySelector;
+    document.querySelector = function (selector) {
+      if (selector === "[data-above-composer-conversation-id]") queries += 1;
+      return query.call(this, selector);
+    };
+    try {
+      for (let index = 0; index < 40; index += 1) {
+        messages.firstChild.nodeValue = `回复 ${index}`;
+        messages.classList.toggle("hovered", index % 2 === 0);
+        await Promise.resolve();
+      }
+      return queries;
+    } finally {
+      document.querySelector = query;
+    }
+  });
+  expect(queries, "消息文本与悬浮样式变化不应触发全页输入区查询").toBe(0);
+  await expect(button).toBeEnabled();
 });
 
 async function complete(page, index, response) {

@@ -79,3 +79,50 @@ test("侧栏悬浮与会话切换合并布局读取，不阻塞 DOM 观察器", 
   expect(await page.evaluate(() => window.fixture.layoutReads)).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test("模型菜单重复刷新不重写未变化的属性，原生重绘后仍可修复", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.setContent('<div role="menu"><div role="menuitemradio">relay/model</div></div>');
+  await page.evaluate(() => {
+    window.__codexSessionDeleteBridge = async () => ({
+      status: "ok", models: ["relay/model"], default_model: "relay/model",
+      model_metadata: [{
+        model: "relay/model", display_name: "[中转] model", route_name: "中转线路",
+        route_prefix: "中转", provider_id: "relay", source_model: "model",
+      }],
+    });
+  });
+  for (const name of ["codey-bridge", "model-request-gate", "model-whitelist-inject"]) {
+    await page.addScriptTag({ content: readFileSync(new URL(`../../public/${name}.js`, import.meta.url), "utf8") });
+  }
+  await page.evaluate(async () => {
+    await window.__codeyModelWhitelistPatch.refresh();
+    window.__codeyModelWhitelistPatch.enhanceModelMenus();
+  });
+  const item = page.getByRole("menuitemradio");
+  await expect(item).toHaveText("model");
+  await expect(item).toHaveAttribute("aria-label", "中转线路 / model");
+  const writes = await page.evaluate(() => {
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.querySelector('[role="menu"]'), {
+      attributes: true, childList: true, characterData: true, subtree: true,
+    });
+    for (let index = 0; index < 20; index += 1) window.__codeyModelWhitelistPatch.enhanceModelMenus();
+    const count = observer.takeRecords().length;
+    observer.disconnect();
+    return count;
+  });
+  expect(writes).toBe(0);
+  await item.evaluate(element => {
+    element.removeAttribute("class");
+    element.removeAttribute("aria-label");
+    delete element.dataset.codeyRouteName;
+    window.__codeyModelWhitelistPatch.enhanceModelMenus();
+  });
+  await expect(item).toHaveClass("codey-model-route-item");
+  await expect(item).toHaveAttribute("aria-label", "中转线路 / model");
+  await expect(item).toHaveAttribute("data-codey-route-name", "中转线路");
+  await page.evaluate(() => window.__codeyModelWhitelistPatch.dispose());
+  expect(errors).toEqual([]);
+});
