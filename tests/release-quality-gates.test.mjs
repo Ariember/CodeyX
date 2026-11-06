@@ -143,10 +143,10 @@ for (const scenario of [
       assert.equal(version, "1.0.1-beta.1");
       return notes;
     }, async (url, options) => {
-      assert.equal(url, "https://api.github.com/repos/fraternity-z/CodeyX/releases/tags/v1.0.1-beta.1");
+      assert.equal(url, "https://api.github.com/repos/Ariember/CodeyX/releases/tags/v1.0.1-beta.1");
       assert.equal(options.headers.Authorization, "Bearer unit-test-token");
       return { status: scenario.status, ok: scenario.status === 200, json: async () => ({ draft: scenario.draft }) };
-    }, { env: { GITHUB_REF_NAME: "v1.0.1-beta.1", GITHUB_REPOSITORY: "fraternity-z/CodeyX", GH_TOKEN: "unit-test-token", RUNNER_TEMP: "release-test", GITHUB_OUTPUT: "release-output" } });
+    }, { env: { GITHUB_REF_NAME: "v1.0.1-beta.1", GITHUB_REPOSITORY: "Ariember/CodeyX", GH_TOKEN: "unit-test-token", RUNNER_TEMP: "release-test", GITHUB_OUTPUT: "release-output" } });
     if (!scenario.allowed) {
       await assert.rejects(run, /already public|HTTP/);
       assert.deepEqual(writes, []);
@@ -227,7 +227,7 @@ test("README keeps required attribution without advertising unbundled plugin not
   const mobileLicense = fs.readFileSync(new URL("../third_party/codex-mobile-bridge.LICENSE", import.meta.url), "utf8")
     .trim().split(/\r?\n/).map(line => line ? `    ${line}` : "").join("\n");
   assert.ok(notices.replaceAll("\r\n", "\n").includes(mobileLicense));
-  assert.match(readme, /github\.com\/fraternity-z\/CodeyX\/releases/);
+  assert.match(readme, /github\.com\/Ariember\/CodeyX\/releases/);
   assert.match(readme, /AGPL-3\.0-only/);
   assert.doesNotMatch(readme, /PPT Bridge|Excel Shield|SUCK_MY_ASTRA|发布管理|定向推送/);
 });

@@ -597,7 +597,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "codey"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "codey-codex-extensions"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "codey-error-log"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "codey-fastctx"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "codey-error-log",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "codey-runtime-core"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "codey-runtime-data"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1278,7 +1278,7 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 [[package]]
 name = "fastctx"
 version = "0.2.6"
-source = "git+https://github.com/fraternity-z/fastctx?rev=36122d57c04832e9a4951b1eb5e3bffbf54ec139#36122d57c04832e9a4951b1eb5e3bffbf54ec139"
+source = "git+https://github.com/Ariember/fastctx?rev=36122d57c04832e9a4951b1eb5e3bffbf54ec139#36122d57c04832e9a4951b1eb5e3bffbf54ec139"
 dependencies = [
  "base64 0.22.1",
  "bpe-openai",

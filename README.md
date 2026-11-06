@@ -9,18 +9,18 @@
 <p>
   <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square" alt="主要维护平台：Windows" />
   <img src="https://img.shields.io/badge/Codex-Desktop-24292F?style=flat-square" alt="Codex 桌面增强" />
-  <a href="https://github.com/fraternity-z/CodeyX/releases/latest"><img src="https://img.shields.io/github/v/release/fraternity-z/CodeyX?style=flat-square&amp;label=Release&amp;color=16856B" alt="最新正式版本" /></a>
+  <a href="https://github.com/Ariember/CodeyX/releases/latest"><img src="https://img.shields.io/github/v/release/Ariember/CodeyX?style=flat-square&amp;label=Release&amp;color=16856B" alt="最新正式版本" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-2563EB?style=flat-square" alt="AGPL-3.0-only 许可" /></a>
 </p>
 
 <p>
-  <a href="https://github.com/fraternity-z/CodeyX/releases/latest">下载最新版</a>
+  <a href="https://github.com/Ariember/CodeyX/releases/latest">下载最新版</a>
   · <a href="#功能总览">功能总览</a>
   · <a href="#界面预览">界面预览</a>
   · <a href="#开始使用">开始使用</a>
   · <a href="#主要功能">主要功能</a>
   · <a href="#使用须知">使用须知</a>
-  · <a href="https://github.com/fraternity-z/CodeyX/issues">问题反馈</a>
+  · <a href="https://github.com/Ariember/CodeyX/issues">问题反馈</a>
 </p>
 
 </div>
@@ -122,7 +122,7 @@ flowchart TB
     class C ready
 ```
 
-1. 从 [Releases](https://github.com/fraternity-z/CodeyX/releases/latest) 下载 Windows 安装包，查看对应版本的发布说明。
+1. 从 [Releases](https://github.com/Ariember/CodeyX/releases/latest) 下载 Windows 安装包，查看对应版本的发布说明。
 2. 安装并打开 CodeyX，由 CodeyX 启动已安装的 Codex 桌面客户端。
 3. 在 Codex 内打开 CodeyX 控制台，添加官方账号或第三方线路，选择要使用的模型。
 
@@ -202,8 +202,8 @@ flowchart TB
 
 | 入口 | 内容 |
 | :--- | :--- |
-| [版本发布](https://github.com/fraternity-z/CodeyX/releases) | 安装包、版本变化与升级说明。 |
-| [问题反馈](https://github.com/fraternity-z/CodeyX/issues) | 报告使用问题或提出功能建议。 |
+| [版本发布](https://github.com/Ariember/CodeyX/releases) | 安装包、版本变化与升级说明。 |
+| [问题反馈](https://github.com/Ariember/CodeyX/issues) | 报告使用问题或提出功能建议。 |
 | [内部开发文档](INTERNAL_DEVELOPMENT.md) | 面向维护者的核心流程、依赖与兼容边界。 |
 | [架构分层规范](ARCHITECTURE.md) | 参与开发时的职责、依赖与状态约束。 |
 | [插件 SDK](crates/codey-plugin-sdk/README.md) | 可信原生插件的开发入口与协议契约。 |

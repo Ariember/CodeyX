@@ -5,7 +5,7 @@ CodeyX 基于 [SuperGness/Codey](https://github.com/SuperGness/codey) 独立维�
 | 组件 | 许可与归属 |
 | --- | --- |
 | CodeyRuntime | AGPL-3.0-only，完整许可保留在 `vendor/CodeyRuntime/LICENSE`。 |
-| [FastCtx 维护版](https://github.com/fraternity-z/fastctx) | 基于 [yc-duan/fastctx](https://github.com/yc-duan/fastctx)，Apache-2.0，Copyright (c) 2026 yc-duan；许可与 NOTICE 保留在 `licenses/FastCtx/`。 |
+| [FastCtx 维护版](https://github.com/Ariember/fastctx) | 基于 [yc-duan/fastctx](https://github.com/yc-duan/fastctx)，Apache-2.0，Copyright (c) 2026 yc-duan；许可与 NOTICE 保留在 `licenses/FastCtx/`。 |
 | ComputerUse | MIT，Copyright (c) 2026 Leo；完整许可保留在 `vendor/ComputerUse/LICENSE` 并随安装包分发。 |
 | [codex-mobile-bridge](https://github.com/try2love/codex-mobile-bridge) | 远程会话协议适配来源，MIT，Copyright (c) 2026 try2love。 |
 | [cloudflared](https://github.com/cloudflare/cloudflared) | 可选下载的隧道组件，Apache-2.0。 |

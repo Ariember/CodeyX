@@ -2929,7 +2929,7 @@ fn default_subagent_reasoning_effort() -> String {
     DEFAULT_SUBAGENT_REASONING_EFFORT.to_string()
 }
 
-const DEFAULT_UPDATE_REPOSITORY: &str = "fraternity-z/CodeyX";
+const DEFAULT_UPDATE_REPOSITORY: &str = "Ariember/CodeyX";
 
 fn github_releases_url_from_repository(repository: Option<&str>) -> String {
     let repository = repository
@@ -5046,7 +5046,7 @@ mod tests {
 
     #[test]
     fn github_releases_default_to_codeyx_and_allow_a_build_time_repository() {
-        let expected = "https://api.github.com/repos/fraternity-z/CodeyX/releases";
+        let expected = "https://api.github.com/repos/Ariember/CodeyX/releases";
 
         assert_eq!(github_releases_url_from_repository(None), expected);
         assert_eq!(github_releases_url_from_repository(Some("  ")), expected);

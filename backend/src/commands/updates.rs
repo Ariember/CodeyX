@@ -1206,7 +1206,7 @@ fn spawn_update_installer(_update_path: &Path, _asset: &UpdateAssetInfo) -> Resu
 mod tests {
     use super::*;
 
-    const REPOSITORY: &str = "fraternity-z/CodeyX";
+    const REPOSITORY: &str = "Ariember/CodeyX";
 
     fn download_asset() -> UpdateAssetInfo {
         let body = b"verified installer";
@@ -1393,17 +1393,17 @@ mod tests {
     #[test]
     fn github_update_source_requires_a_public_repository_endpoint() {
         assert_eq!(
-            github_releases_repository("https://api.github.com/repos/fraternity-z/CodeyX/releases")
+            github_releases_repository("https://api.github.com/repos/Ariember/CodeyX/releases")
                 .unwrap(),
             REPOSITORY,
         );
         for url in [
-            "http://api.github.com/repos/fraternity-z/CodeyX/releases",
-            "https://other.example/repos/fraternity-z/CodeyX/releases",
-            "https://user@api.github.com/repos/fraternity-z/CodeyX/releases",
-            "https://api.github.com/repos/fraternity-z/CodeyX/releases?token=value",
-            "https://api.github.com/repos/fraternity-z/CodeyX/releases#fragment",
-            "https://api.github.com/repos/fraternity-z/CodeyX/releases/latest",
+            "http://api.github.com/repos/Ariember/CodeyX/releases",
+            "https://other.example/repos/Ariember/CodeyX/releases",
+            "https://user@api.github.com/repos/Ariember/CodeyX/releases",
+            "https://api.github.com/repos/Ariember/CodeyX/releases?token=value",
+            "https://api.github.com/repos/Ariember/CodeyX/releases#fragment",
+            "https://api.github.com/repos/Ariember/CodeyX/releases/latest",
         ] {
             assert!(github_releases_repository(url).is_err(), "{url}");
         }
@@ -1420,7 +1420,7 @@ mod tests {
         assert_eq!(value["releaseTitle"], "CodeyX v2.0.0 · 更新公告");
         assert_eq!(
             value["releaseUrl"],
-            "https://github.com/fraternity-z/CodeyX/releases/tag/v2.0.0"
+            "https://github.com/Ariember/CodeyX/releases/tag/v2.0.0"
         );
     }
 
@@ -1521,7 +1521,7 @@ mod tests {
         for url in [
             "https://other.example/setup.exe",
             "https://github.com/other/repo/releases/download/v2.0.0/CodeyX-2.0.0-windows-x64-setup.exe",
-            "https://github.com/fraternity-z/CodeyX/releases/download/v1.0.0/CodeyX-2.0.0-windows-x64-setup.exe",
+            "https://github.com/Ariember/CodeyX/releases/download/v1.0.0/CodeyX-2.0.0-windows-x64-setup.exe",
         ] {
             let mut release = github_release("2.0.0");
             release.assets[0].browser_download_url = url.into();

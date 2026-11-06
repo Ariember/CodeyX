@@ -10,11 +10,11 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText.replace(/from "([^".][^"]*)"/g, (_match, specifier) => `from "${import.meta.resolve(specifier)}"`);
 const { ReleaseNotes, releaseContentUrl, githubReleaseUrl } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
-const releaseUrl = "https://github.com/fraternity-z/CodeyX/releases/tag/v1.0.1";
+const releaseUrl = "https://github.com/Ariember/CodeyX/releases/tag/v1.0.1";
 const render = (markdown, props = {}) => renderToStaticMarkup(React.createElement(ReleaseNotes, { markdown, releaseUrl, ...props }));
 
 test("客户端完整渲染 Release 标题、GFM 列表、表格、代码和图片", () => {
-  const html = render("## 本次亮点\n\n支持 **完整公告** 与 ~~旧文案~~。\n\n1. 第一项\n2. 第二项\n\n- [x] 已完成\n\n| 平台 | 状态 |\n| --- | --- |\n| Windows | 支持 |\n\n```js\nconst value = 1;\n```\n\n![功能截图](https://github.com/user-attachments/assets/example.png)\n\n[完整变更](https://github.com/fraternity-z/CodeyX/compare/v1.0.0...v1.0.1)", { title: "CodeyX v1.0.1 · 更新公告" });
+  const html = render("## 本次亮点\n\n支持 **完整公告** 与 ~~旧文案~~。\n\n1. 第一项\n2. 第二项\n\n- [x] 已完成\n\n| 平台 | 状态 |\n| --- | --- |\n| Windows | 支持 |\n\n```js\nconst value = 1;\n```\n\n![功能截图](https://github.com/user-attachments/assets/example.png)\n\n[完整变更](https://github.com/Ariember/CodeyX/compare/v1.0.0...v1.0.1)", { title: "CodeyX v1.0.1 · 更新公告" });
   for (const pattern of [/CodeyX v1\.0\.1 · 更新公告/, /<h2[^>]*>本次亮点<\/h2>/, /<strong>完整公告<\/strong>/, /<del>旧文案<\/del>/, /<ol>/, /type="checkbox"/, /<table>/, /hljs-keyword/, /alt="功能截图"/, /loading="lazy"/, /referrerPolicy="no-referrer"/, /rel="noopener noreferrer"/]) assert.match(html, pattern);
 });
 
@@ -49,8 +49,8 @@ test("公告只允许安全标记，不执行 HTML、脚本、样式或本地协
 });
 
 test("相对链接按对应发布标签解析，不访问宿主页面或本地桥接", () => {
-  assert.equal(releaseContentUrl("docs/guide.md", "href", releaseUrl), "https://github.com/fraternity-z/CodeyX/blob/v1.0.1/docs/guide.md");
-  assert.equal(releaseContentUrl("images/preview.png", "src", releaseUrl), "https://raw.githubusercontent.com/fraternity-z/CodeyX/v1.0.1/images/preview.png");
+  assert.equal(releaseContentUrl("docs/guide.md", "href", releaseUrl), "https://github.com/Ariember/CodeyX/blob/v1.0.1/docs/guide.md");
+  assert.equal(releaseContentUrl("images/preview.png", "src", releaseUrl), "https://raw.githubusercontent.com/Ariember/CodeyX/v1.0.1/images/preview.png");
   assert.equal(releaseContentUrl("https://example.test/docs", "href"), "https://example.test/docs");
   assert.equal(releaseContentUrl("mailto:hello@example.test", "href"), "mailto:hello@example.test");
   for (const url of ["javascript:alert(1)", "file:///C:/secret", "C:\\secret", "//example.test/image", "https://user:password@example.test/image", "https://example.test/\u0000image"]) {

@@ -590,7 +590,7 @@ export function App({
                     variant="ghost"
                     className="sidebar-footer-icon-btn"
                     aria-label="打开 CodeyX GitHub 仓库"
-                    onClick={() => window.open("https://github.com/fraternity-z/CodeyX", "_blank", "noopener,noreferrer")}
+                    onClick={() => window.open("https://github.com/Ariember/CodeyX", "_blank", "noopener,noreferrer")}
                   >
                     <IconBrandGithub size={15} aria-hidden="true" />
                   </Button>

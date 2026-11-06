@@ -62,7 +62,7 @@
       function UpdateFixture() {
         const [open, setOpen] = React.useState(true);
         return React.createElement(ConfirmationDialog, {
-          confirmation: open ? { action: "download-update", title: "发现 CodeyX 新版本 v1.0.1", description: "当前版本为 v1.0.0，检测到新版本 v1.0.1。\n\n是否立即下载更新？", releaseNotes, releaseTitle: "CodeyX v1.0.1 · 更清楚的更新公告", releaseUrl: "https://github.com/fraternity-z/CodeyX/releases/tag/v1.0.1", confirmLabel: "立即更新", run() {} } : null,
+          confirmation: open ? { action: "download-update", title: "发现 CodeyX 新版本 v1.0.1", description: "当前版本为 v1.0.0，检测到新版本 v1.0.1。\n\n是否立即下载更新？", releaseNotes, releaseTitle: "CodeyX v1.0.1 · 更清楚的更新公告", releaseUrl: "https://github.com/Ariember/CodeyX/releases/tag/v1.0.1", confirmLabel: "立即更新", run() {} } : null,
           container: modalContainer,
           onClose() { window.updateFixture.dismissed = true; setOpen(false); },
           onConfirm() { window.updateFixture.confirmed = true; setOpen(false); },

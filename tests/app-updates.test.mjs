@@ -287,7 +287,7 @@ test("下载和安装确认使用同一份完整公告与发布页信息", async
   let confirmation;
   h.options.setConfirmation = value => { confirmation = value; };
   const asset = { fileName: "setup.exe", size: 100, url: "https://example.test/setup.exe", sha256: "a".repeat(64) };
-  const update = { ...available, releaseId: "42", selectedAsset: asset, releaseNotes: "    保留代码缩进\n\n## 完整公告\n\n**最后一段**\n", releaseTitle: "CodeyX v1.0.1 · 更新公告", releaseUrl: "https://github.com/fraternity-z/CodeyX/releases/tag/v1.0.1" };
+  const update = { ...available, releaseId: "42", selectedAsset: asset, releaseNotes: "    保留代码缩进\n\n## 完整公告\n\n**最后一段**\n", releaseTitle: "CodeyX v1.0.1 · 更新公告", releaseUrl: "https://github.com/Ariember/CodeyX/releases/tag/v1.0.1" };
   const checking = h.render().checkForUpdates();
   h.requests[0].resolve(update);
   await checking;
