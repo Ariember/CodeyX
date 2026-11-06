@@ -5,6 +5,30 @@ const sources = ["codey-bridge.js", "codex-runtime-adapter.js", "codey-inject.js
   readFileSync(new URL(`../../public/${name}`, import.meta.url), "utf8")
 ));
 
+test("共享观察器调整订阅时保留待派发变更，最后退订后停止观察", async ({ page }) => {
+  await page.setContent('<main><div id="composer"></div></main>');
+  await page.addScriptTag({ content: sources[0] });
+  const result = await page.evaluate(async () => {
+    const dispatcher = window.__codeyMutationDispatcher;
+    const changes = [];
+    const stop = dispatcher.subscribe(records => {
+      changes.push(...records.map(record => record.attributeName));
+    }, { attributes: true, attributeFilter: ["data-session", "data-state"] });
+    const composer = document.getElementById("composer");
+    composer.setAttribute("data-session", "first");
+    const stopTemporary = dispatcher.subscribe(() => {}, { childList: true });
+    await Promise.resolve();
+    composer.setAttribute("data-state", "ready");
+    stopTemporary();
+    await Promise.resolve();
+    stop();
+    composer.setAttribute("data-session", "second");
+    await Promise.resolve();
+    return { changes, installed: dispatcher.snapshot().observerInstalled };
+  });
+  expect(result).toEqual({ changes: ["data-session", "data-state"], installed: false });
+});
+
 test("侧栏悬浮与会话切换合并布局读取，不阻塞 DOM 观察器", async ({ page }) => {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));

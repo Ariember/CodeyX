@@ -76,6 +76,47 @@ async function complete(page, index, response) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
+test("连续输入与文本观察共用一次延迟读取，不在输入事件内强制布局", async ({ page }) => {
+  await page.setContent(`<main style="margin:200px 40px 0;width:600px">
+    <div data-above-composer-conversation-id="test-session"></div>
+    <div id="composer" contenteditable="true" role="textbox" style="min-height:80px">initial</div>
+    <div style="display:flex;gap:12px"><button>完全访问</button><button>发送</button></div>
+  </main>`);
+  await page.evaluate(() => {
+    window.__codexSessionDeleteBridge = async () => ({ promptOptimization: { enabled: true, mode: "codeyRoute" } });
+  });
+  for (const name of ["codey-bridge", "prompt-optimize"]) {
+    await page.addScriptTag({ path: fileURLToPath(new URL(`../../public/${name}.js`, import.meta.url)) });
+  }
+  const button = page.locator("#codey-prompt-optimize-button");
+  await expect(button).toBeEnabled();
+  const reads = await page.evaluate(async () => {
+    const composer = document.getElementById("composer");
+    const innerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "innerText");
+    let reads = 0;
+    Object.defineProperty(composer, "innerText", {
+      configurable: true,
+      get() { reads += 1; return innerText.get.call(this); },
+    });
+    try {
+      for (let index = 0; index < 40; index += 1) {
+        composer.firstChild.nodeValue = index === 39 ? "" : `输入 ${index}`;
+        composer.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+        await Promise.resolve();
+      }
+      const synchronous = reads;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      return { synchronous, total: reads };
+    } finally {
+      delete composer.innerText;
+    }
+  });
+  expect(reads).toEqual({ synchronous: 0, total: 1 });
+  await expect(button).toBeDisabled();
+  await page.locator("#composer").fill("继续输入");
+  await expect(button).toBeEnabled();
+});
+
 test("路由模型点击整行展开且只能从列表选择，支持键盘并保存选择", async ({ page }) => {
   await openSettings(page);
   const label = "提示词优化 CodeyX 路由模型";

@@ -607,6 +607,8 @@
     readComposerText(context.element) === context.text;
 
   const updateButtonState = () => {
+    clearTimeout(buttonStateTimer);
+    buttonStateTimer = 0;
     if (!button) return;
     const empty = !readComposerText().trim();
     const disabled = busy || empty;
@@ -621,6 +623,15 @@
     const label = busy ? "正在优化提示词" : empty ? "请输入内容后优化" : "优化提示词";
     button.setAttribute("aria-label", label);
     button.title = label;
+  };
+
+  const scheduleButtonState = () => {
+    if (!enabled || buttonStateTimer) return;
+    // innerText can force layout; input and DOM changes share one deferred read.
+    buttonStateTimer = setTimeout(() => {
+      buttonStateTimer = 0;
+      if (enabled) updateButtonState();
+    }, 0);
   };
 
   const showError = (message) => {
@@ -941,11 +952,7 @@
         continue;
       }
       if (mutationInsideTrackedInput(mutation)) {
-        // innerText may force layout; read it once after the mutation burst.
-        if (!buttonStateTimer) buttonStateTimer = setTimeout(() => {
-          buttonStateTimer = 0;
-          if (enabled) updateButtonState();
-        }, 0);
+        scheduleButtonState();
         if (isPlainTrackedInputMutation(mutation)) continue;
       }
       if (
@@ -1079,7 +1086,7 @@
   document.addEventListener(
     "input",
     (event) => {
-      if (nodeInsideTrackedInput(event.target)) updateButtonState();
+      if (nodeInsideTrackedInput(event.target)) scheduleButtonState();
     },
     true,
   );

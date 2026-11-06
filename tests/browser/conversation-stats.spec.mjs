@@ -3,6 +3,74 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("../../public/conversation-stats-inject.js", import.meta.url));
 
+test("统计浮层放大窗口后仍贴近入口，滚动缩放合并到一帧并可清理", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 360 });
+  await page.setContent(`<main style="position:fixed;bottom:24px;left:24px;right:24px">
+    <div data-above-composer-conversation-id="conversation-1"></div><textarea></textarea>
+  </main>`);
+  await page.evaluate(() => {
+    window.__codexSessionDeleteBridge = async () => ({
+      status: "ok", stats: { totalTokens: 100 },
+      codegraph: { phase: "watching", projectPath: `E:/${"long-project-directory/".repeat(30)}`, message: "项目索引已接入" },
+    });
+  });
+  await page.addScriptTag({ path: script });
+  const trigger = page.locator(".codey-cs-codegraph-summary");
+  await trigger.click();
+  const panel = page.getByRole("region", { name: "CodeGraph 代码索引", exact: true });
+  await expect(panel).toBeVisible();
+  await panel.evaluate(element => {
+    window.panelGaps = [];
+    window.panelPositionObserver = new MutationObserver(() => {
+      const anchor = document.querySelector(".codey-cs-codegraph-summary").getBoundingClientRect();
+      window.panelGaps.push(Math.round(anchor.top - element.getBoundingClientRect().bottom));
+    });
+    window.panelPositionObserver.observe(element, { attributes: true, attributeFilter: ["style"] });
+  });
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect.poll(async () => {
+    const [anchor, box] = await Promise.all([trigger.boundingBox(), panel.boundingBox()]);
+    return Math.round(anchor.y - box.y - box.height);
+  }).toBe(8);
+  const gaps = await page.evaluate(() => {
+    window.panelPositionObserver.disconnect();
+    return window.panelGaps;
+  });
+  expect(gaps.length).toBeGreaterThan(0);
+  expect(gaps.every(gap => gap === 8), `每次定位都应贴近入口，实际间距：${gaps}`).toBe(true);
+
+  const measurements = await page.evaluate(async () => {
+    const refs = document.getElementById("codey-conversation-stats").__codeyCs;
+    const panel = refs.panels.codegraph;
+    const original = panel.getBoundingClientRect;
+    let reads = 0;
+    panel.getBoundingClientRect = function () { reads += 1; return original.call(this); };
+    try {
+      // 内部滚动不会改变浮层的锚点；外部事件只需使用本帧最终布局。
+      for (let index = 0; index < 20; index += 1) panel.dispatchEvent(new Event("scroll"));
+      await new Promise(requestAnimationFrame);
+      const internal = reads;
+      reads = 0;
+      for (let index = 0; index < 20; index += 1) {
+        document.dispatchEvent(new Event("scroll"));
+        window.dispatchEvent(new Event("resize"));
+      }
+      const synchronous = reads;
+      await new Promise(requestAnimationFrame);
+      const frame = reads;
+      reads = 0;
+      window.dispatchEvent(new Event("resize"));
+      window.__codeyConversationStats.dispose();
+      await new Promise(requestAnimationFrame);
+      return { internal, synchronous, frame, afterDispose: reads };
+    } finally {
+      panel.getBoundingClientRect = original;
+    }
+  });
+  expect(measurements).toEqual({ internal: 0, synchronous: 0, frame: 1, afterDispose: 0 });
+  await expect(panel).toHaveCount(0);
+});
+
 test("changing statistics preserves text nodes without structural mutations", async ({ page }) => {
   await page.setContent('<main><div data-above-composer-conversation-id="conversation-1"></div><textarea></textarea></main>');
   await page.evaluate(() => {

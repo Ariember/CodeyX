@@ -662,6 +662,7 @@ test("keeps raw turn changes from scanning while the mounted button has no inser
 
   env.newChatInput.innerText = "连续 turn 后仍需写入";
   env.emitInput(env.newChatInput);
+  await flush();
   assert.equal(button.disabled, false);
 });
 
@@ -881,10 +882,12 @@ test("enables the optimize button only while the composer has content", async ()
 
   env.textarea.value = "   ";
   env.emitInput();
+  await flush();
   assert.equal(button.disabled, true);
 
   env.textarea.value = "需要优化的提示词";
   env.emitInput();
+  await flush();
   assert.equal(button.disabled, false);
   assert.equal(button.getAttribute("aria-disabled"), "false");
   assert.equal(button.getAttribute("aria-label"), "优化提示词");
@@ -892,6 +895,7 @@ test("enables the optimize button only while the composer has content", async ()
 
   env.textarea.value = "";
   env.emitInput();
+  await flush();
   assert.equal(button.disabled, true);
   assert.equal(button.title, "请输入内容后优化");
 });
@@ -1196,6 +1200,7 @@ test("skips geometry scans for child and character changes inside the tracked in
 
   env.newChatInput.innerText = "即时状态";
   env.emitInput(text);
+  await flush();
   assert.equal(button.disabled, false);
   assert.equal(env.getComposerQueryCount(), before);
 });
@@ -1247,7 +1252,7 @@ test("ignores unrelated DOM mutations while the composer remains connected", asy
   assert.equal(env.getComposerQueryCount(), queryCount);
 });
 
-test("coalesces observer text reads without forcing layout during mutation delivery", async () => {
+test("coalesces input and observer text reads without forcing layout during event delivery", async () => {
   const env = createEnvironment({ anchors: false, newChatComposer: true });
   await flush();
   const button = env.getElementById("codey-prompt-optimize-button");
@@ -1257,8 +1262,11 @@ test("coalesces observer text reads without forcing layout during mutation deliv
     get() { reads += 1; return text; },
   });
   const mutation = { type: "childList", target: env.newChatInput, addedNodes: [], removedNodes: [] };
-  for (let index = 0; index < 100; index += 1) env.emitMutation([mutation]);
-  assert.equal(reads, 0, "innerText can force layout and must stay outside observer delivery");
+  for (let index = 0; index < 100; index += 1) {
+    env.emitInput(env.newChatInput);
+    env.emitMutation([mutation]);
+  }
+  assert.equal(reads, 0, "innerText can force layout and must stay outside input and observer delivery");
   await flush();
   assert.equal(reads, 1);
   assert.equal(button.disabled, false);
@@ -1275,13 +1283,14 @@ test("coalesces observer text reads without forcing layout during mutation deliv
   assert.equal(button.disabled, true);
 });
 
-test("disabling prompt optimization cancels a queued observer text read", async () => {
+test("disabling prompt optimization cancels a queued input and observer text read", async () => {
   const env = createEnvironment({ anchors: false, newChatComposer: true });
   await flush();
   let reads = 0;
   Object.defineProperty(env.newChatInput, "innerText", {
     get() { reads += 1; return "draft"; },
   });
+  env.emitInput(env.newChatInput);
   env.emitMutation([{ type: "childList", target: env.newChatInput, addedNodes: [], removedNodes: [] }]);
   env.setConfig({ promptOptimization: { enabled: false } });
   env.emitConfigChanged();
@@ -1491,10 +1500,13 @@ test("failed optimization keeps the original text and uses the global toast", as
   assert.equal(toast.textContent, "API Key 无效");
 });
 
-test("an empty composer keeps the button disabled without showing an error", async () => {
-  const env = createEnvironment({ enabled: true, apiKeyConfigured: true });
+test("clearing the composer before a queued update still prevents an empty optimization request", async () => {
+  const env = createEnvironment({ enabled: true, apiKeyConfigured: true, initialText: "draft" });
   await flush();
   const button = env.getElementById("codey-prompt-optimize-button");
+  assert.equal(button.disabled, false);
+  env.textarea.value = "";
+  env.emitInput();
 
   button.dispatchEvent({
     type: "click",

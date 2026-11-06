@@ -2,7 +2,7 @@
 // /session/stats 返回统计范围；会话 id 取自可见 composer，隐藏会话不参与。
 (() => {
   const PROBE_KEY = "__codeyConversationStats";
-  const VERSION = 12;
+  const VERSION = 13;
   const previous = window[PROBE_KEY];
   if (previous?.installed && (previous.version === VERSION || !previous.dispose)) return;
   previous?.dispose?.();
@@ -46,6 +46,7 @@
   let codegraph = null;
   let pollTimer = 0;
   let rescanTimer = 0;
+  let positionFrame = 0;
   let fetchInFlight = false;
   let refreshPending = false;
   let lastFetchOk = false;
@@ -312,17 +313,29 @@
     syncPanelTheme();
     const panel = refs.panels[refs.active];
     const rect = refs.buttons[refs.active].getBoundingClientRect();
-    const panelRect = panel.getBoundingClientRect();
     const height = window.innerHeight || document.documentElement.clientHeight;
     const width = window.innerWidth || document.documentElement.clientWidth;
     // 气泡贴近入口，鼠标可以直接移入；只覆盖编辑器，不推动页面布局。
     const available = Math.max(80, rect.top - 20);
-    setValue(panel.style, "left", `${Math.max(12, Math.min(rect.left + (rect.width - panelRect.width) / 2, width - panelRect.width - 12))}px`);
     setValue(panel.style, "maxHeight", `${Math.min(height - 24, available)}px`);
+    // 窗口变大时先解除旧高度限制，再测量，避免使用旧高度把浮层推到入口下方。
+    const panelRect = panel.getBoundingClientRect();
+    setValue(panel.style, "left", `${Math.max(12, Math.min(rect.left + (rect.width - panelRect.width) / 2, width - panelRect.width - 12))}px`);
     setValue(panel.style, "top", `${Math.max(12, rect.top - Math.min(panelRect.height, available) - 8)}px`);
   };
 
+  const schedulePanelPosition = (event) => {
+    if (disposed || !statsElement?.__codeyCs?.active || positionFrame) return;
+    if (event.type === "scroll" && containsStats(event.target)) return;
+    positionFrame = window.requestAnimationFrame(() => {
+      positionFrame = 0;
+      if (!disposed) positionPanel();
+    });
+  };
+
   const setExpanded = (expanded, restoreFocus = false, kind = null) => {
+    if (positionFrame) window.cancelAnimationFrame(positionFrame);
+    positionFrame = 0;
     const refs = statsElement?.__codeyCs;
     if (!refs) return;
     const active = kind || refs.active || "activity";
@@ -688,8 +701,8 @@
     listen(document, "click", (event) => {
       if (inComposer(event.target) && event.target.closest?.("button")) wake(SUBMIT_POLL_DELAY_MS, true);
     }, true);
-    listen(window, "resize", positionPanel);
-    listen(document, "scroll", positionPanel, true);
+    listen(window, "resize", schedulePanelPosition);
+    listen(document, "scroll", schedulePanelPosition, true);
     listen(document, "pointerdown", (event) => {
       if (statsElement && !containsStats(event.target)) setExpanded(false);
     });

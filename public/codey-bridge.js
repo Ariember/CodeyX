@@ -262,13 +262,13 @@
   };
 
   const syncMutationObserver = () => {
-    mutationObserver?.disconnect();
-    mutationObserver = null;
     if (
       !mutationSubscribers.size
       || typeof MutationObserver !== "function"
       || !document.documentElement
     ) {
+      mutationObserver?.disconnect();
+      mutationObserver = null;
       return;
     }
 
@@ -290,7 +290,11 @@
         subscriber.attributeFilter.forEach((attribute) => attributeFilter.add(attribute));
       }
     }
-    if (!attributes && !childList && !characterData) return;
+    if (!attributes && !childList && !characterData) {
+      mutationObserver?.disconnect();
+      mutationObserver = null;
+      return;
+    }
 
     const options = { attributes, childList, subtree: true };
     if (characterData) options.characterData = true;
@@ -298,7 +302,8 @@
     if (attributes && !observeAllAttributes && attributeFilter.size) {
       options.attributeFilter = [...attributeFilter];
     }
-    mutationObserver = new MutationObserver(dispatchMutations);
+    // Updating observe options preserves records queued for existing subscribers.
+    mutationObserver ||= new MutationObserver(dispatchMutations);
     mutationObserver.observe(document.documentElement, options);
   };
 
