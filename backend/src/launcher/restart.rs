@@ -43,14 +43,10 @@ mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
-    async fn restart_waits_for_pending_wsl_preference_to_be_saved() {
+    async fn restart_waits_for_pending_preferences_to_be_saved() {
         let home = tempfile::tempdir().unwrap();
         let path = home.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[desktop]\nrunCodexInWindowsSubsystemForLinux = true\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "[desktop]\ntheme = \"light\"\n").unwrap();
         let running = Arc::new(AtomicBool::new(true));
         let exiting = Arc::clone(&running);
         let saved_path = path.clone();
@@ -60,11 +56,7 @@ mod tests {
                 tokio::spawn(async move {
                     // Longer than the old restart's fixed 250 ms delay.
                     tokio::time::sleep(Duration::from_millis(600)).await;
-                    std::fs::write(
-                        saved_path,
-                        "[desktop]\nrunCodexInWindowsSubsystemForLinux = false\n",
-                    )
-                    .unwrap();
+                    std::fs::write(saved_path, "[desktop]\ntheme = \"dark\"\n").unwrap();
                     exiting.store(false, Ordering::Release);
                 });
                 Ok(())
@@ -73,7 +65,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(std::fs::read_to_string(path).unwrap().contains("= false"));
+        assert!(std::fs::read_to_string(path).unwrap().contains("\"dark\""));
     }
 
     #[tokio::test(start_paused = true)]

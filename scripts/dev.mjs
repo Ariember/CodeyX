@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildWslRuntime } from "./build-wsl-runtime.mjs";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -36,78 +35,6 @@ export function codeyExecutablePaths({ root, args, env }) {
     ? resolve(root, env.CARGO_TARGET_DIR)
     : join(root, "target");
   return [join(targetDirectory, target ?? "", profile, "codey.exe").toLowerCase()];
-}
-
-export function wslDevelopmentOptions({
-  args,
-  enabled = false,
-  env = process.env,
-  platform = process.platform,
-  root = projectRoot,
-}) {
-  const separator = args.indexOf("--");
-  const cargoEnd = separator === -1 ? args.length : separator;
-  if (!enabled && !args.slice(0, cargoEnd).includes("--wsl")) return { args };
-  if (platform !== "win32") throw new Error("--wsl 开发入口仅适用于 Windows");
-  const filtered = args.filter((arg, index) => index >= cargoEnd || arg !== "--wsl");
-  const [executable] = codeyExecutablePaths({ root, args: filtered, env });
-  if (!executable) throw new Error("无法识别 WSL 组件对应的 Windows 程序目录");
-  return {
-    args: filtered,
-    build: {
-      root,
-      output: join(dirname(executable), "wsl"),
-      debug: cargoProfile(filtered) !== "release",
-      distro: env.CODEY_WSL_DISTRO,
-      offline: args.slice(0, cargoEnd).includes("--offline")
-        || env.CARGO_NET_OFFLINE === "true" || env.CARGO_NET_OFFLINE === "1",
-    },
-  };
-}
-
-export function configuredWslDevelopment({
-  args,
-  env = process.env,
-  platform = process.platform,
-  root = projectRoot,
-  spawn = spawnSync,
-}) {
-  if (platform !== "win32") return false;
-  const separator = args.indexOf("--");
-  const cargoArgs = separator === -1 ? args : args.slice(0, separator);
-  // Query through Rust's TOML parser before starting the desktop or changing
-  // its configuration. This also prepares the overlay for the Linux build.
-  const result = spawn(
-    "cargo",
-    ["run", "-p", "codey", "--manifest-path", join(root, "Cargo.toml"), ...cargoArgs, "--", "--codey-wsl-status"],
-    { cwd: root, env, encoding: "utf8", stdio: ["inherit", "pipe", "inherit"] },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0 || !["true", "false"].includes(result.stdout?.trim())) {
-    throw new Error("无法读取 Codex WSL 设置，未启动客户端；请检查 Cargo 输出和 Codex 配置");
-  }
-  return result.stdout.trim() === "true";
-}
-
-export function wslDistroAvailable({
-  distro,
-  platform = process.platform,
-  spawn = spawnSync,
-}) {
-  if (platform !== "win32") return false;
-  const result = spawn(
-    "wsl.exe",
-    [...(distro ? ["--distribution", distro] : []), "--exec", "/bin/true"],
-    { stdio: "ignore", timeout: 60_000, windowsHide: true },
-  );
-  return !result.error && result.status === 0;
-}
-
-// 显式要求或 Codex 已选择 WSL 后端时缺少组件会导致启动失败；其余情况只要本机
-// WSL 可用就预先准备，便于之后在 Codex 中切换环境，失败不影响 Windows 后端开发。
-export function wslRuntimePreparation({ explicit, enabled, available }) {
-  if (explicit || enabled) return "required";
-  return available() ? "optional" : "skip";
 }
 
 export function forceKillEnabled(env) {
@@ -223,7 +150,7 @@ export function ensureUnlockedCodeyOnWindows({
 }
 
 function main() {
-  let { args, build: wslBuild } = wslDevelopmentOptions({ args: process.argv.slice(2) });
+  const args = process.argv.slice(2);
   if (!ensureUnlockedCodeyOnWindows({ args })) {
     process.exitCode = 1;
     return;
@@ -240,23 +167,6 @@ function main() {
   if (build.status !== 0) {
     process.exitCode = build.status ?? 1;
     return;
-  }
-
-  const preparation = wslRuntimePreparation({
-    explicit: Boolean(wslBuild),
-    enabled: configuredWslDevelopment({ args }),
-    available: () => wslDistroAvailable({ distro: process.env.CODEY_WSL_DISTRO }),
-  });
-  if (preparation !== "skip" && !wslBuild) {
-    ({ build: wslBuild } = wslDevelopmentOptions({ args, enabled: true }));
-  }
-  if (wslBuild) {
-    try {
-      buildWslRuntime(wslBuild);
-    } catch (error) {
-      if (preparation === "required") throw error;
-      console.warn(`[dev] 未能准备 WSL 组件，本次只能使用 Windows 后端：${error.message}`);
-    }
   }
 
   const cargo = spawnSync(

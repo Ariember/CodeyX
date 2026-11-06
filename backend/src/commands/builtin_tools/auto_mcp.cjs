@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { createHash, randomUUID } = require("node:crypto");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { setTimeout: delay } = require("node:timers/promises");
 
 const MAX_LINE = 8 * 1024 * 1024;
@@ -14,15 +14,6 @@ class SetupError extends Error {}
 function directory(candidate) {
   if (typeof candidate !== "string" || !path.isAbsolute(candidate)) return null;
   try { return fs.statSync(candidate).isDirectory() ? fs.realpathSync(candidate) : null; } catch { return null; }
-}
-
-function mapWindowsPath(candidate, convert = value => spawnSync("wslpath", ["-u", value], { encoding: "utf8", timeout: 5000 })) {
-  if (typeof candidate !== "string" || !/^(?:[a-z]:[/\\]|\\\\)/i.test(candidate)) return candidate;
-  const normalized = path.win32.normalize(candidate);
-  if (path.win32.parse(normalized).root === normalized) return null;
-  const result = convert(candidate);
-  const mapped = result.stdout?.trimEnd();
-  return result.status === 0 && mapped?.startsWith("/") ? mapped : null;
 }
 
 function workspaceRoots(home, codexHome) {
@@ -49,7 +40,6 @@ function workspaceRoots(home, codexHome) {
     candidates = Object.hasOwn(state, "electron-saved-workspace-roots") ? state["electron-saved-workspace-roots"] : [];
     if (!Array.isArray(candidates)) throw new SetupError("Codex 工作区项目清单格式无效，已暂停自动索引");
   }
-  if (process.platform === "linux" && process.env.CODEY_WSL_HELPER) candidates = candidates.map(candidate => mapWindowsPath(candidate));
   const excluded = [home, path.join(home, ".codex"), codexHome].map(directory).filter(Boolean);
   return [...new Set(candidates.map(directory).filter(candidate => candidate
     && candidate !== path.parse(candidate).root && !excluded.some(root => path.relative(root, candidate) === "")))];
@@ -327,7 +317,7 @@ function start({ entry, root, cwd = process.cwd(), home = os.homedir(), codexHom
   return { stop };
 }
 
-module.exports = { projectPath, mapWindowsPath, needsIndex, cleanEnv, writeRecord, activeWriter, acquireBootstrap, prepareProject, start };
+module.exports = { projectPath, needsIndex, cleanEnv, writeRecord, activeWriter, acquireBootstrap, prepareProject, start };
 if (require.main === module) {
   const entry = process.argv[2];
   try {

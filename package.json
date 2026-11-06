@@ -7,7 +7,6 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:wsl": "node scripts/dev.mjs --wsl",
     "build": "node scripts/build.mjs",
     "check": "node --check backend/src/codex_startup_patch.js && tsc --noEmit && node scripts/check-architecture.mjs",
     "release": "node scripts/release.mjs",

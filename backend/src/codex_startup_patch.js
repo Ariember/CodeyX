@@ -1796,8 +1796,6 @@
   // 这里只决定是否跳过源码补丁；每次 spawn 仍重新核对命令与实际环境。
   const preferCodeyStdinRelay = localRouterRuntimeEnabled &&
     prepareCodeyStdinRelay(process.env.CODEX_CLI_PATH, []) != null;
-  const managedWslClis = new WeakSet();
-  const managedWslLaunches = new WeakMap();
   const NativeSpawn = childProcess.spawn;
   if (!NativeSpawn.__codeyAppServerAnalyticsDisabled) {
     const isManagedCodexAppServerSpawn = (command, args) =>
@@ -1826,17 +1824,6 @@
       }, ...rest.slice(1)];
     };
     const codeyAnalyticsDisabledSpawn = function (command, args, ...rest) {
-      const wslLaunch = process.platform === "win32" &&
-        /(?:^|[/\\])wsl(?:\.exe)?$/i.test(String(command)) &&
-        managedWslLaunches.get(rest[0]?.env);
-      const wslStatus = wslLaunch ? { ...wslLaunch.status, command, args } : null;
-      if (wslLaunch && (!Array.isArray(args) || args.length !== wslLaunch.args.length ||
-          !wslLaunch.args.every((value, index) => args[index] === value) ||
-          !Object.entries(wslLaunch.environment).every(([key, value]) => rest[0].env[key] === value))) {
-        wslStatus.failure = "Codey WSL 启动上下文已变化，运行时配置未完成验证";
-        recordCodexAppServerRuntimeOverrideAttempt(wslStatus);
-        throw new Error(wslStatus.failure);
-      }
       const rewritten = rewriteCodexAppServerSpawnArgs(command, args);
       let rewrittenRest = isManagedCodexAppServerSpawn(command, rewritten)
         ? withSubagentGateEnvironment(rest)
@@ -1879,22 +1866,15 @@
             ? arguments
             : [command, rewritten, ...rewrittenRest]);
       } catch (error) {
-        const status = runtimeOverrideStatus ?? wslStatus;
-        if (status != null) {
-          status.failure = "无法创建 app-server 进程，运行时配置未完成验证";
-          recordCodexAppServerRuntimeOverrideAttempt(status);
+        if (runtimeOverrideStatus != null) {
+          runtimeOverrideStatus.failure = "无法创建 app-server 进程，运行时配置未完成验证";
+          recordCodexAppServerRuntimeOverrideAttempt(runtimeOverrideStatus);
         }
         throw error;
       }
       if (rewritten !== args) appServerAnalyticsPatchCount += 1;
       if (runtimeOverrideStatus != null) {
         recordCodexAppServerRuntimeOverrideAttempt(runtimeOverrideStatus);
-      }
-      if (wslStatus) {
-        child.once("spawn", () => recordCodexAppServerRuntimeOverrideAttempt(wslStatus));
-        child.once("error", () => recordCodexAppServerRuntimeOverrideAttempt({
-          ...wslStatus, failure: "无法创建 WSL app-server 进程，运行时配置未完成验证",
-        }));
       }
       return child;
     };
@@ -2312,130 +2292,6 @@
     }
     return -1;
   };
-  // Desktop 的旧 WSL 模式仍属于 local host；必须在其 Linux CLI 选择边界隔离 Windows 包装器。
-  const selectWslCli = (resolve) => {
-    const env = process.env;
-    const previous = env.CODEX_CLI_PATH;
-    const managed = process.platform === "win32" && previous &&
-      previous === env.CODEY_WSL_WINDOWS_HOST;
-    if (!managed) return resolve();
-    let native;
-    try {
-      delete env.CODEX_CLI_PATH;
-      native = resolve();
-    } finally {
-      env.CODEX_CLI_PATH = previous;
-    }
-    if (!native) return native;
-    const helper = env.CODEY_WSL_HELPER;
-    const fs = process.getBuiltinModule("fs");
-    const path = process.getBuiltinModule("path");
-    const isFile = (filename) => {
-      try { return typeof filename === "string" && path.isAbsolute(filename) && fs.statSync(filename).isFile(); }
-      catch { return false; }
-    };
-    if (!isFile(helper)) {
-      throw new Error("Codey WSL 运行组件缺失，请安装包含 WSL 组件的 Codey 版本");
-    }
-    if (!isFile(native.executablePath) || fs.realpathSync(native.executablePath) === fs.realpathSync(helper) ||
-        fs.realpathSync(native.executablePath) === fs.realpathSync(previous)) {
-      throw new Error("Codey WSL 未找到独立的 Linux Codex 后端");
-    }
-    const cli = { ...native, executablePath: helper, codeyWslTarget: native.executablePath };
-    managedWslClis.add(cli);
-    return cli;
-  };
-  const wslAppServerEnvironment = (environment, cli, args, spawnArgs) => {
-    if (!managedWslClis.has(cli)) return environment;
-    const env = { ...environment };
-    const values = {
-      CODEY_WSL_HELPER: process.env.CODEY_WSL_HELPER,
-      CODEY_WSL_WINDOWS_HOST: process.env.CODEY_WSL_WINDOWS_HOST,
-      CODEY_WSL_CODEGRAPH_ROOT: process.env.CODEY_WSL_CODEGRAPH_ROOT,
-      CODEY_CODEX_CLI_WRAPPER_TARGET: cli.codeyWslTarget,
-      CODEY_CODEX_CLI_WRAPPER_MARKER: process.env.CODEY_CODEX_CLI_WRAPPER_MARKER,
-      CODEY_CODEX_CLI_WRAPPER_OVERRIDES: process.env.CODEY_CODEX_CLI_WRAPPER_OVERRIDES,
-      CODEY_CODEX_CLI_WRAPPER_SUBAGENT: process.env.CODEY_CODEX_CLI_WRAPPER_SUBAGENT,
-    };
-    for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"]) {
-      if (typeof env[key] === "string" && env[key]) values[key] = env[key];
-    }
-    const paths = new Set([
-      "CODEY_WSL_HELPER", "CODEY_WSL_WINDOWS_HOST", "CODEY_CODEX_CLI_WRAPPER_TARGET",
-      "CODEY_CODEX_CLI_WRAPPER_MARKER",
-      "CODEY_WSL_CODEGRAPH_ROOT",
-    ]);
-    const entries = (env.WSLENV ?? "").split(":").filter((entry) =>
-      entry && !Object.hasOwn(values, entry.split("/")[0]));
-    for (const [key, value] of Object.entries(values)) {
-      if (typeof value !== "string" || !value) throw new Error(`Codey WSL 启动缺少 ${key}`);
-      env[key] = value;
-      entries.push(key + (paths.has(key) ? "/p" : ""));
-    }
-    env.WSLENV = entries.join(":");
-    let configs;
-    try { configs = JSON.parse(values.CODEY_CODEX_CLI_WRAPPER_OVERRIDES); } catch {}
-    if (!Array.isArray(configs) || !configs.every((config) => typeof config === "string")) {
-      throw new Error("Codey WSL 运行时配置格式无效");
-    }
-    const missing = validateRuntimeConfigSet(uniqueRuntimeConfigsByKey([
-      appServerAnalyticsConfig, ...configs,
-    ]), appServerRuntimeConfigs);
-    if (missing.length) throw new Error(`Codey WSL 运行时配置缺失：${missing.map(runtimeOverrideKey).join(", ")}`);
-    if (Array.isArray(args) && args.filter((arg) => arg === "app-server").length === 1 &&
-        usesAppServerStdin(args) && Array.isArray(spawnArgs)) {
-      managedWslLaunches.set(env, {
-        args: [...spawnArgs], environment: { ...values, WSLENV: env.WSLENV },
-        status: { mode: "wsl", requiredRuntimeConfigs: appServerRuntimeConfigs,
-          missingRuntimeConfigs: [], stdinRelayAvailable: true },
-      });
-    }
-    return env;
-  };
-  const patchCodexWslLaunch = (source) => {
-    if (process.platform !== "win32") return source;
-    if (source.includes("globalThis.__CODEY_SELECT_WSL_CLI__(") &&
-        source.includes("globalThis.__CODEY_WSL_APP_SERVER_ENV__(")) return source;
-    const functions = [...source.matchAll(/function\s+[$\w]+\([^)]*\)\{/g)];
-    const candidates = functions.flatMap((match) => {
-      const open = match.index + match[0].length - 1;
-      const close = matchingBrace(source, open);
-      if (close < 0) return [];
-      const body = source.slice(open, close + 1);
-      return body.includes("windowsCodexHome:") && body.includes("interactivePath:") &&
-        /spawnCommand:[`"']wsl\.exe[`"']/.test(body) ? [{ open, close, body }] : [];
-    });
-    if (candidates.length !== 1) throw new Error("Codey WSL 启动入口无法识别");
-    const { open, close, body } = candidates[0];
-    const result = /executablePath:([$\w]+)\.executablePath,args:([$\w]+),env:([$\w]+),spawnCommand:[`"']wsl\.exe[`"'],spawnArgs:([$\w]+)/.exec(body);
-    if (!result) throw new Error("Codey WSL 启动结果无法识别");
-    const cli = result[1];
-    const declaration = new RegExp(`(?<![$\\w])${cli.replaceAll("$", "\\$")}=([$\\w]+\\(\\{[^{}]*windowsCodexHome:[^{}]*\\}\\))`);
-    let selection = declaration.exec(body);
-    // 26.1029 将 CLI 选择器内联成 IIFE；仍验证完整函数边界及 Windows home 参数。
-    if (!selection) {
-      const inline = new RegExp(`(?<![$\\w])${cli.replaceAll("$", "\\$")}=(function\\([^)]*\\)\\{)`).exec(body);
-      if (inline) {
-        const end = matchingBrace(body, inline.index + inline[0].length - 1);
-        const args = end < 0 ? null : /^\(\{[^{}]*windowsCodexHome:[^{}]*\}\)/.exec(body.slice(end + 1));
-        if (args) {
-          const call = body.slice(inline.index + cli.length + 1, end + 1 + args[0].length);
-          selection = [`${cli}=${call}`, call];
-        }
-      }
-    }
-    if (!selection) throw new Error("Codey WSL CLI 选择入口无法识别");
-    const patched = body.replace(selection[0], () =>
-      `${cli}=globalThis.__CODEY_SELECT_WSL_CLI__(()=>${selection[1]})`).replace(
-        result[0], result[0].replace(`env:${result[3]},`,
-          `env:globalThis.__CODEY_WSL_APP_SERVER_ENV__(${result[3]},${cli},${result[2]},${result[4]}),`));
-    return source.slice(0, open) + patched + source.slice(close + 1);
-  };
-  Object.defineProperties(globalThis, {
-    __CODEY_SELECT_WSL_CLI__: { value: selectWslCli },
-    __CODEY_WSL_APP_SERVER_ENV__: { value: wslAppServerEnvironment },
-    __CODEY_PATCH_CODEX_WSL_LAUNCH__: { value: patchCodexWslLaunch },
-  });
   const patchCodexMainThreadTitleModel = (source) => {
     const titleCalls = [...source.matchAll(
       /await\s+([$A-Z_a-z][$\w]*)\(\{[^{}]{0,1000}\bfeature:(`thread_title`|"thread_title"|'thread_title')/g,
@@ -3014,10 +2870,6 @@
         globalThis.__CODEY_FASTCTX_NATIVE_TOOLS_SOURCE_PATCHED__ =
           source.includes("__CODEY_FASTCTX_NATIVE_TOOLS_SOURCE_PATCHED__=true")
           && !hasOptionalMainBundlePatchFailure("fastCtxNativeTools");
-      }
-      if (process.platform === "win32" && source.includes("windowsCodexHome:") &&
-          /spawnCommand:[`"']wsl\.exe[`"']/.test(source)) {
-        source = patchCodexWslLaunch(source);
       }
       const hasAppServerMessages = localRouterRuntimeEnabled && !preferCodeyStdinRelay &&
         source.includes("this.options.transformOutgoingMessage");

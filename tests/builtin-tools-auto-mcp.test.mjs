@@ -67,22 +67,6 @@ function records(root) {
   return fs.existsSync(directory) ? fs.readdirSync(directory).filter(file => file.endsWith(".json")).map(file => JSON.parse(fs.readFileSync(path.join(directory, file)))) : [];
 }
 
-test("WSL workspace conversion preserves Linux paths and rejects failed conversions", () => {
-  for (const root of ["C:/", "C:\\", "C:/project/..", "C:\\."]) assert.equal(launcher.mapWindowsPath(root, () => { throw new Error("must not map drive roots"); }), null);
-  for (const original of ["/home/user/project", "relative", null]) {
-    assert.equal(launcher.mapWindowsPath(original, () => { throw new Error("must not convert"); }), original);
-  }
-  for (const original of ["C:\\Project with spaces", "d:/project", "\\\\wsl.localhost\\Ubuntu\\home\\user"]) {
-    assert.equal(launcher.mapWindowsPath(original, value => {
-      assert.equal(value, original);
-      return { status: 0, stdout: "/mapped/project\n" };
-    }), "/mapped/project");
-    for (const result of [{ status: 1, stdout: "/bad" }, { status: 0, stdout: "relative" }, { error: new Error("timeout") }]) {
-      assert.equal(launcher.mapWindowsPath(original, () => result), null);
-    }
-  }
-});
-
 test("project selection only accepts saved workspace roots and resolves nested directories", t => {
   const { root, project, home, codexHome, saveProjects } = fixture(t);
   const nested = path.join(project, "nested");

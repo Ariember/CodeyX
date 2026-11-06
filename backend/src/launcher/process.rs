@@ -1461,31 +1461,7 @@ async fn prepare_cli_wrapper(
         ));
     }
     #[cfg(windows)]
-    let wrapper = {
-        environment.extend(crate::wsl::windows::launch_environment());
-        environment.push((
-            "CODEY_WSL_HELPER".to_string(),
-            codey
-                .with_file_name("wsl")
-                .join("codey")
-                .to_string_lossy()
-                .into_owned(),
-        ));
-        environment.push((
-            "CODEY_WSL_WINDOWS_HOST".to_string(),
-            codey.to_string_lossy().into_owned(),
-        ));
-        environment.push((
-            "CODEY_WSL_CODEGRAPH_ROOT".to_string(),
-            crate::config::default_config_path()
-                .parent()
-                .context("Codey 配置目录无效")?
-                .join("builtin-tools/codegraph")
-                .to_string_lossy()
-                .into_owned(),
-        ));
-        codey
-    };
+    let wrapper = codey;
     #[cfg(target_os = "macos")]
     let wrapper = {
         let path = crate::config::default_config_path().with_file_name("codex-cli-wrapper");

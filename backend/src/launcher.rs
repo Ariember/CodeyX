@@ -2135,6 +2135,8 @@ impl CodeyRuntime {
             crate::launch_proxy::record_startup_warning(warning);
         }
         let home = codex_home();
+        #[cfg(windows)]
+        validate_windows_native_backend(home).await?;
         repair_startup_reserved_providers(home).await;
         trace_log_write_protection_active.store(false, Ordering::Release);
         let injection_scripts = cdp::prepare_injection_scripts(

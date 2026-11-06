@@ -99,19 +99,6 @@ impl NativeUpdateUi {
         .map(|_| ())
     }
 
-    #[cfg(windows)]
-    pub async fn confirm_wsl_recovery(&self, error: &str) -> Result<bool, String> {
-        show_dialog(
-            "CodeyX 启动恢复".to_string(),
-            wsl_recovery_description(error),
-            DialogKind::Recovery,
-            "切换 Windows 并重试".to_string(),
-            Some("退出".to_string()),
-        )
-        .await
-        .map(|result| result == DialogResult::Primary)
-    }
-
     pub fn shutdown(&self) {
         if let Ok(platform) = &self.platform {
             platform.shutdown();
@@ -124,13 +111,6 @@ enum DialogKind {
     Confirm,
     Failure,
     Recovery,
-}
-
-#[cfg(any(windows, test))]
-fn wsl_recovery_description(error: &str) -> String {
-    format!(
-        "{error}\n\n当前 Codex 使用 WSL 后端，未能完成启动。可切换到 Windows 后端并重新通过 CodeyX 启动；WSL 修复后可在 Codex 设置中切回。\n\n确认后先备份 Codex 配置，仅关闭 WSL 选项；保留代理、线路和项目配置，不迁移 WSL 会话。选择退出或关闭此窗口不会修改配置。"
-    )
 }
 
 /// 上下文恢复提示出现的时机：启动或重启 Codex 失败，或保存模型时无法应用自定义预算。
@@ -304,36 +284,6 @@ mod update_note_tests {
         );
         assert_eq!(
             dialog_result_for_label(DialogKind::Failure, None, "退出"),
-            DialogResult::Primary
-        );
-    }
-
-    #[test]
-    fn wsl_recovery_explains_the_change_and_requires_its_exact_confirmation() {
-        let description = wsl_recovery_description("WSL runtime missing");
-        assert!(description.starts_with("WSL runtime missing"));
-        for expected in [
-            "先备份",
-            "仅关闭 WSL",
-            "保留代理",
-            "不迁移 WSL 会话",
-            "不会修改配置",
-            "可在 Codex 设置中切回",
-        ] {
-            assert!(description.contains(expected));
-        }
-        for label in [None, Some("退出"), Some("OK")] {
-            assert_eq!(
-                dialog_result_for_label(DialogKind::Recovery, label, "切换 Windows 并重试"),
-                DialogResult::Secondary
-            );
-        }
-        assert_eq!(
-            dialog_result_for_label(
-                DialogKind::Recovery,
-                Some("切换 Windows 并重试"),
-                "切换 Windows 并重试"
-            ),
             DialogResult::Primary
         );
     }

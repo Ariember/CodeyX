@@ -3859,10 +3859,9 @@ fn trust_hash_is_canonical_and_definition_sensitive() {
 }
 
 #[test]
-fn windows_posix_hook_uses_runtime_helper_without_changing_powershell_command() {
+fn hook_commands_use_the_native_executable_for_both_shells() {
     let commands = hook_commands_for(COMBINED_HOOK_ARGUMENT).unwrap();
     let executable = std::env::current_exe().unwrap();
-    let fallback = format!("{} {COMBINED_HOOK_ARGUMENT}", quote_posix(&executable));
     assert_eq!(
         commands.command_windows,
         format!(
@@ -3872,58 +3871,6 @@ fn windows_posix_hook_uses_runtime_helper_without_changing_powershell_command() 
     );
     assert_eq!(
         commands.command,
-        if cfg!(windows) {
-            wsl_hook_command(&fallback, COMBINED_HOOK_ARGUMENT)
-        } else {
-            fallback
-        }
+        format!("{} {COMBINED_HOOK_ARGUMENT}", quote_posix(&executable))
     );
-}
-
-#[cfg(unix)]
-#[test]
-fn wsl_hook_command_preserves_paths_fallback_and_failure() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempfile::tempdir().unwrap();
-    let fallback = temp.path().join("fallback ' $` Codey");
-    let helper = temp.path().join("helper ' $` Codey");
-    for (path, label) in [(&fallback, "fallback"), (&helper, "helper")] {
-        fs::write(
-            path,
-            format!("#!/bin/sh\nprintf '%s\\n' '{label}' \"$@\"\n"),
-        )
-        .unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let command = wsl_hook_command(
-        &format!("{} {HOOK_ARGUMENT}", quote_posix(&fallback)),
-        HOOK_ARGUMENT,
-    );
-    for (value, expected) in [
-        (None, "fallback"),
-        (Some(""), "fallback"),
-        (helper.to_str(), "helper"),
-    ] {
-        let mut process = std::process::Command::new("/bin/sh");
-        process
-            .args(["-c", &command])
-            .env_remove("CODEY_WSL_HELPER");
-        if let Some(value) = value {
-            process.env("CODEY_WSL_HELPER", value);
-        }
-        let output = process.output().unwrap();
-        assert!(output.status.success());
-        assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            format!("{expected}\n{HOOK_ARGUMENT}\n")
-        );
-    }
-    let output = std::process::Command::new("/bin/sh")
-        .args(["-c", &command])
-        .env("CODEY_WSL_HELPER", temp.path().join("missing-helper"))
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
 }

@@ -21,6 +21,34 @@ const WINDOWS_CODEX_STOP_TIMEOUT: Duration = Duration::from_secs(8);
 #[cfg(windows)]
 const WINDOWS_STARTUP_PATCH_FAILURE_STOP_TIMEOUT: Duration = Duration::from_secs(20);
 
+#[cfg(any(windows, test))]
+pub(super) async fn validate_windows_native_backend(home: &Path) -> Result<()> {
+    let home = home.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let snapshot = codey_runtime_core::config_manager::ConfigManager::for_home(&home)
+            .load()
+            .map_err(|_| {
+                anyhow::anyhow!("读取 Codex 桌面设置失败，请检查配置文件格式和访问权限")
+            })?;
+        let Some(desktop) = snapshot.document().get("desktop") else {
+            return Ok(());
+        };
+        let desktop = desktop
+            .as_table_like()
+            .context("Codex desktop 设置必须是 TOML 表")?;
+        if let Some(value) = desktop.get("runCodexInWindowsSubsystemForLinux") {
+            let enabled = value.as_bool().context("Codex WSL 设置必须是布尔值")?;
+            anyhow::ensure!(
+                !enabled,
+                "CodeyX 在 Windows 上仅支持原生后端；请先在 Codex 设置中关闭 WSL 选项，再重新启动 CodeyX"
+            );
+        }
+        Ok(())
+    })
+    .await
+    .context("检查 Codex Windows 原生后端设置的任务异常退出")?
+}
+
 #[cfg(windows)]
 pub(super) struct WindowsStartupProcess(pub(super) std::os::windows::io::OwnedHandle);
 
@@ -1316,6 +1344,63 @@ pub(super) fn windows_stop_failure_summary(remaining: &[(u32, String, Option<u64
 #[cfg(test)]
 mod compatibility_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_backend_preflight_accepts_missing_or_disabled_settings_without_writing() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("config.toml");
+        validate_windows_native_backend(home.path()).await.unwrap();
+        assert!(!path.exists());
+        for source in [
+            "",
+            "[desktop]\ntheme = \"dark\"\n",
+            "[desktop]\nrunCodexInWindowsSubsystemForLinux = false\n",
+            "desktop = { runCodexInWindowsSubsystemForLinux = false }\n",
+            "desktop.runCodexInWindowsSubsystemForLinux = false\n",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            validate_windows_native_backend(home.path()).await.unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_backend_preflight_rejects_wsl_and_invalid_settings_without_writing() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("config.toml");
+        for (source, expected) in [
+            (
+                "[desktop]\nrunCodexInWindowsSubsystemForLinux = true\n",
+                "仅支持原生后端",
+            ),
+            (
+                "desktop = { runCodexInWindowsSubsystemForLinux = true }\n",
+                "仅支持原生后端",
+            ),
+            (
+                "desktop.runCodexInWindowsSubsystemForLinux = true\n",
+                "仅支持原生后端",
+            ),
+            (
+                "[desktop]\nrunCodexInWindowsSubsystemForLinux = \"true\"\n",
+                "必须是布尔值",
+            ),
+            ("desktop = false\n", "必须是 TOML 表"),
+            ("[desktop\n", "读取 Codex 桌面设置失败"),
+            (
+                "api_key = \"synthetic-preflight-secret\n",
+                "读取 Codex 桌面设置失败",
+            ),
+        ] {
+            std::fs::write(&path, source).unwrap();
+            let error = validate_windows_native_backend(home.path())
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+            assert!(!format!("{error:#}").contains("synthetic-preflight-secret"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+    }
 
     #[test]
     fn process_cleanup_refuses_other_installations_before_stopping_anything() {

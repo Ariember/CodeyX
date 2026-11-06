@@ -120,6 +120,8 @@ fn native_command(app_dir: &Path, home: &Path) -> std::process::Command {
 
 async fn launch_native(app_dir: &Path, home: &Path) -> Result<()> {
     #[cfg(windows)]
+    validate_windows_native_backend(home).await?;
+    #[cfg(windows)]
     let refreshed = refresh_windows_packaged_app_dir(app_dir)?;
     #[cfg(windows)]
     let app_dir = refreshed.as_path();
@@ -186,6 +188,20 @@ async fn run_native_command(command: std::process::Command) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn native_recovery_rejects_wsl_before_resolving_or_launching_the_app() {
+        let home = tempfile::tempdir().unwrap();
+        let source = "[desktop]\nrunCodexInWindowsSubsystemForLinux = true\n";
+        let path = home.path().join("config.toml");
+        std::fs::write(&path, source).unwrap();
+        let error = launch_native(&home.path().join("missing-app"), home.path())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("仅支持原生后端"));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), source);
+    }
 
     #[test]
     fn recoverable_failure_survives_diagnostic_context() {

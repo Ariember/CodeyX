@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 use std::ffi::{OsStr, OsString};
 #[cfg(any(windows, target_os = "macos", test))]
 use std::io::Write;
@@ -50,7 +50,7 @@ pub(crate) const CLI_WRAPPER_PORT_ENV: &str = "CODEY_CODEX_CLI_WRAPPER_PORT";
 #[cfg(any(windows, target_os = "macos", test))]
 pub(crate) const CLI_WRAPPER_TOKEN_ENV: &str = "CODEY_CODEX_CLI_WRAPPER_TOKEN";
 /// 包装器执行记录文件的绝对路径；回环握手丢失时启动器据此确认目标已执行。
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) const CLI_WRAPPER_MARKER_ENV: &str = "CODEY_CODEX_CLI_WRAPPER_MARKER";
 /// When Inspector installation may win the startup race, the wrapper records
 /// progress through its marker only and does not connect a listener that the
@@ -407,12 +407,12 @@ impl std::error::Error for CliWrapperFailure {}
 #[cfg(any(windows, target_os = "macos"))]
 pub(crate) const MAX_CLI_WRAPPER_FAILURE_BYTES: usize = 8 * 1024;
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) const MAX_CLI_WRAPPER_MARKER_BYTES: u64 = 16 * 1024;
 
 /// 包装器在握手端口之外留下的文件记录。回环连接被拖慢或丢失时，启动器仍能确认目标已执行，
 /// 不会因为一次握手丢失就杀掉健康的 Codex。
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CliWrapperMarkerStatus {
@@ -421,7 +421,7 @@ pub(crate) enum CliWrapperMarkerStatus {
     Failed,
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CliWrapperMarker {
     pub status: CliWrapperMarkerStatus,
@@ -433,7 +433,7 @@ pub(crate) struct CliWrapperMarker {
     pub retryable: Option<bool>,
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 impl CliWrapperMarker {
     pub(crate) fn new(status: CliWrapperMarkerStatus) -> Self {
         Self {
@@ -471,7 +471,7 @@ impl CliWrapperMarker {
 }
 
 /// 只接受启动器传入的绝对 JSON 路径，避免包装器把记录写到不可预期的位置。
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) fn cli_wrapper_marker_path_from_env(
     value: Option<OsString>,
 ) -> Option<std::path::PathBuf> {
@@ -645,15 +645,6 @@ pub fn run_cli_wrapper_if_requested() -> Result<bool> {
             !app_server || !managed_launch || runtime_overrides.is_some(),
             "Codex app-server 缺少本次启动配置，已停止启动；请通过 Codey 重新启动 Codex"
         );
-        #[cfg(windows)]
-        if let Some(child) = crate::wsl::windows::spawn_if_requested(
-            &target,
-            &original_args,
-            runtime_overrides.as_deref().unwrap_or_default(),
-            app_server,
-        )? {
-            return Ok(child);
-        }
         // 独立浏览器调用没有启动配置，原样转发给 Codex 内置 CLI。
         let rewritten_args = match runtime_overrides.as_ref() {
             Some(overrides) => rewrite_app_server_args(&original_args, overrides)?,
@@ -771,7 +762,7 @@ pub fn run_cli_wrapper_if_requested() -> Result<bool> {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) fn route_local_app_server_input(
     mut input: impl std::io::BufRead,
     mut output: impl std::io::Write,
@@ -1144,12 +1135,12 @@ fn connect_loopback_with_retry_using(
     }
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn runtime_override_key(config: &str) -> &str {
     config.split_once('=').map_or(config, |(key, _)| key).trim()
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn app_server_runtime_configs(runtime_overrides: &[String]) -> Vec<String> {
     let mut configs = vec!["analytics.enabled=false".to_string()];
     for config in runtime_overrides {
@@ -1169,13 +1160,13 @@ fn app_server_runtime_configs(runtime_overrides: &[String]) -> Vec<String> {
     configs
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) fn local_router_runtime_enabled(overrides: &[String]) -> bool {
     runtime_override_string(overrides, "model_provider")
         .is_some_and(|provider| crate::local_router::is_router_provider(&provider))
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn runtime_override_string(overrides: &[String], name: &str) -> Option<String> {
     let (_, value) = overrides
         .iter()
@@ -1189,7 +1180,7 @@ fn runtime_override_string(overrides: &[String], name: &str) -> Option<String> {
     }
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn router_provider_for_params(
     _method: &str,
     _params: &serde_json::Map<String, serde_json::Value>,
@@ -1198,7 +1189,7 @@ fn router_provider_for_params(
     crate::local_router::ROUTER_PROVIDER_ID
 }
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) fn rewrite_app_server_args(
     args: &[OsString],
     runtime_overrides: &[String],

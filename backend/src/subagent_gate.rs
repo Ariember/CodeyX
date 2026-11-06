@@ -249,10 +249,7 @@ pub(crate) fn hook_commands() -> Result<HookCommands> {
 
 pub(crate) fn hook_commands_for(argument: &str) -> Result<HookCommands> {
     let executable = std::env::current_exe().context("定位 Codey 子代理门禁程序失败")?;
-    #[cfg(not(windows))]
     let command = format!("{} {argument}", quote_posix(&executable));
-    #[cfg(windows)]
-    let command = windows_posix_hook_command(&executable, argument);
     Ok(HookCommands {
         command,
         command_windows: format!(
@@ -260,18 +257,6 @@ pub(crate) fn hook_commands_for(argument: &str) -> Result<HookCommands> {
             powershell_executable_invocation(&executable)
         ),
     })
-}
-
-#[cfg(any(windows, target_os = "linux"))]
-pub(crate) fn windows_posix_hook_command(executable: &Path, argument: &str) -> String {
-    wsl_hook_command(&format!("{} {argument}", quote_posix(executable)), argument)
-}
-
-#[cfg(any(windows, target_os = "linux", test))]
-fn wsl_hook_command(fallback: &str, argument: &str) -> String {
-    format!(
-        r#"if [ -n "${{CODEY_WSL_HELPER:-}}" ]; then exec "$CODEY_WSL_HELPER" {argument}; else exec {fallback}; fi"#
-    )
 }
 
 pub(crate) fn hook_trust_hash(

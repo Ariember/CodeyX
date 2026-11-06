@@ -62,8 +62,6 @@ mod task_activity;
 mod trace_log_guard;
 mod trace_log_stats;
 mod update_helper;
-#[cfg(any(windows, target_os = "linux"))]
-mod wsl;
 
 use std::sync::Arc;
 
@@ -96,10 +94,6 @@ pub fn run_plugin_log_terminal_if_requested() -> Result<bool> {
 }
 
 pub fn run_codex_cli_wrapper_if_requested() -> Result<bool> {
-    #[cfg(any(windows, target_os = "linux"))]
-    if wsl::run_if_requested()? {
-        return Ok(true);
-    }
     codex_startup_patch::run_cli_wrapper_if_requested()
 }
 
@@ -261,17 +255,6 @@ async fn run(ui: NativeUpdateUi) -> Result<()> {
                         Ok(false) => {}
                         Err(recovery_error) => {
                             error = format!("{error}；恢复默认上下文预算失败：{recovery_error}");
-                        }
-                    }
-                }
-                #[cfg(windows)]
-                if cleanup.is_ok() && !context_recovery {
-                    match wsl::windows::recover_startup(&ui, &error).await {
-                        Ok(Some(true)) => continue,
-                        Ok(Some(false)) => return Err(anyhow::Error::msg(error)),
-                        Ok(None) => {}
-                        Err(recovery_error) => {
-                            error = format!("{error}；切换 Windows 后端失败：{recovery_error:#}");
                         }
                     }
                 }

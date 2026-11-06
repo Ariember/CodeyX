@@ -25,8 +25,7 @@ pub(crate) use quit::request_native_quit;
 const SETTINGS_OVERLAY_LOAD_PATH: &str = "/internal/codey/settings-overlay/load";
 const SESSION_TOOLS_LOAD_PATH: &str = "/internal/codey/session-tools/load";
 const CDP_INJECTION_TIMEOUT: Duration = Duration::from_secs(30);
-// Desktop 创建主窗口前会先读取启动策略；WSL 模式需在发行版内冷启动 app-server，
-// 官方为准备与策略读取分别预留 120 秒和 60 秒。只在 CDP 端点仍有响应时沿用此上限。
+// Desktop 创建主窗口前会先读取启动策略；只在 CDP 端点仍有响应时等待窗口就绪。
 const CDP_WINDOW_WAIT_TIMEOUT: Duration = Duration::from_secs(180);
 const INITIAL_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 // 发现与选择阶段的失败只付一次 loopback 请求的代价，既不触碰 renderer，也不
@@ -2491,7 +2490,7 @@ assert.equal(nextPage.window.attempts, 1);
         assert_eq!(deadline.at(), at(30));
         assert!(!deadline.awaiting_window());
 
-        // WSL 启动策略读取期间端点返回空列表：每次响应都顺延，但有窗口等待上限。
+        // 启动策略读取期间端点返回空列表：每次响应都顺延，但有窗口等待上限。
         deadline.observe(InjectionPhase::SelectTarget, at(29));
         assert_eq!(deadline.at(), at(59));
         assert!(deadline.awaiting_window());
