@@ -441,6 +441,77 @@ test("unchanged rescans do not rewrite attributes and changed values update imme
   } finally { env.dispose(); }
 });
 
+test("unchanged idle statistics back off and submission, visibility and session changes reset polling", async () => {
+  const env = createEnvironment({ manualTimers: true, statsBySession: { "conversation-1": STATS } });
+  try {
+    for (const delay of [0, 3000, 6000, 12000]) {
+      env.runTimer(delay); await flushTimers(0);
+    }
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 12000));
+    for (const event of [
+      { type: "keydown", target: env.textarea, key: "Enter", shiftKey: true },
+      { type: "keydown", target: env.textarea, key: "Enter", isComposing: true },
+      { type: "keydown", target: env.document.body, key: "Enter" },
+    ]) env.document.dispatchEvent(event);
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 12000));
+    env.document.dispatchEvent({ type: "keydown", target: env.textarea, key: "Enter" });
+    env.runTimer(300); await flushTimers(0);
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 3000));
+    env.runTimer(3000); await flushTimers(0);
+    env.setVisibility("hidden");
+    assert.equal(env.timers.size, 0);
+    env.setVisibility("visible"); env.runTimer(0); await flushTimers(0);
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 3000));
+    env.runTimer(3000); await flushTimers(0);
+    env.setConversation("conversation-2"); env.emitAnchorMutation();
+    env.runTimer(120); env.runTimer(0); await flushTimers(0);
+    assert.equal(env.snapshot().sessionId, "conversation-2");
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 3000));
+  } finally { env.dispose(); }
+});
+
+test("changed CodeGraph status and failed statistics reads reset idle backoff", async () => {
+  let response = { status: "ok", stats: STATS, codegraph: { phase: "indexing" } };
+  const env = createEnvironment({ manualTimers: true, request: async () => {
+    if (response instanceof Error) throw response;
+    return response;
+  } });
+  try {
+    env.runTimer(0); await flushTimers(0);
+    env.runTimer(3000); await flushTimers(0);
+    response = { ...response, codegraph: { phase: "watching" } };
+    env.runTimer(6000); await flushTimers(0);
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 3000));
+    for (const failure of [{ status: "failed" }, new Error("mock failure")]) {
+      env.runTimer(3000); await flushTimers(0);
+      response = failure;
+      env.runTimer(6000); await flushTimers(0);
+      assert.equal(env.snapshot().lastFetchOk, false);
+      assert.ok([...env.timers.values()].some(timer => timer.delay === 3000));
+      response = { status: "ok", stats: STATS };
+      env.runTimer(3000); await flushTimers(0);
+    }
+  } finally { env.dispose(); }
+});
+
+test("submission during an in-flight read discards old statistics and queues one refresh", async () => {
+  const pending = [];
+  const env = createEnvironment({ manualTimers: true, request: () => new Promise(resolve => pending.push(resolve)) });
+  try {
+    env.runTimer(0); await flushTimers(0);
+    env.document.dispatchEvent({ type: "keydown", target: env.textarea, key: "Enter" });
+    pending.shift()({ status: "ok", stats: STATS }); await flushTimers(0);
+    assert.equal(env.snapshot().stats, null);
+    env.runTimer(0); await flushTimers(0);
+    assert.equal(env.calls.length, 2);
+    pending.shift()({ status: "ok", stats: { ...STATS, inFlight: 1 } }); await flushTimers(0);
+    assert.ok([...env.timers.values()].some(timer => timer.delay === 1100));
+    env.dispose();
+    env.document.dispatchEvent({ type: "keydown", target: env.textarea, key: "Enter" });
+    assert.equal(env.timers.size, 0);
+  } finally { env.dispose(); }
+});
+
 test("initially hidden pages schedule no work and visible polling preserves both intervals", async () => {
   const env = createEnvironment({ manualTimers: true, visibilityState: "hidden", statsBySession: { "conversation-1": STATS } });
   try {

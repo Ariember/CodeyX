@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadTypeScriptModule } from "./helpers/load-typescript-module.mjs";
 
-const { reconcileConfigDraft } = await loadTypeScriptModule(new URL("../src/configDraft.ts", import.meta.url));
+const { configsHaveSameDraftValues, reconcileConfigDraft } = await loadTypeScriptModule(new URL("../src/configDraft.ts", import.meta.url));
 
 const baseline = () => ({
   settingsRevision: 1,
@@ -47,4 +47,21 @@ test("locally added and removed custom routes survive account updates", () => {
   const result = reconcileConfigDraft(base, draft, incoming);
   assert.deepEqual(result.config.profiles.map((profile) => profile.id), ["official", "new"]);
   assert.equal(result.dirty, true);
+});
+
+test("draft equality ignores revisions and key order but preserves arrays, missing values and edits", () => {
+  const base = baseline();
+  const reordered = { ...Object.fromEntries(Object.entries(base).reverse()), settingsRevision: 8,
+    routeRequestLog: { batchSize: 20, enabled: false } };
+  assert.equal(configsHaveSameDraftValues(base, reordered), true);
+  assert.equal(configsHaveSameDraftValues(null, null), true);
+  assert.equal(configsHaveSameDraftValues(base, null), false);
+  for (const changed of [
+    { ...base, profiles: [...base.profiles].reverse() },
+    { ...base, streamMaxRetries: null },
+    { ...base, streamMaxRetries: undefined },
+    { ...base, routeRequestLog: { batchSize: 21, enabled: false } },
+    { ...base, extra: undefined },
+  ]) assert.equal(configsHaveSameDraftValues(base, changed), false);
+  assert.deepEqual(reconcileConfigDraft(base, reordered, base), { config: base, dirty: false });
 });

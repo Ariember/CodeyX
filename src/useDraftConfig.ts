@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { Config } from "./App.types";
-import { reconcileConfigDraft } from "./configDraft";
+import { configsHaveSameDraftValues, reconcileConfigDraft } from "./configDraft";
 
 function onlyLocalRouterToggleChanged(current: Config, persisted: Config) {
   if (current.localRouterEnabled === persisted.localRouterEnabled) return false;
@@ -12,11 +12,10 @@ function onlyLocalRouterToggleChanged(current: Config, persisted: Config) {
     ))) {
     return true;
   }
-  return JSON.stringify({
+  return configsHaveSameDraftValues({
     ...current,
     localRouterEnabled: persisted.localRouterEnabled,
-    settingsRevision: 0,
-  }) === JSON.stringify({ ...persisted, settingsRevision: 0 });
+  }, persisted);
 }
 
 export function useDraftConfig() {
@@ -31,6 +30,7 @@ export function useDraftConfig() {
     persistedConfigRef.current = next;
     draftConfigRef.current = next;
     setConfig(next);
+    setDirty(false);
   }, []);
 
   const pendingNativeRouterToggle = useMemo(() => Boolean(
@@ -43,7 +43,7 @@ export function useDraftConfig() {
   function editConfig(next: Config) {
     draftConfigRef.current = next;
     setConfig(next);
-    setDirty(true);
+    setDirty(!configsHaveSameDraftValues(next, persistedConfigRef.current));
   }
 
   function isOnlyNativeRouterToggle(current: Config) {

@@ -15,7 +15,7 @@ use crate::subagent::lifecycle::{ExecutionOutcome, ExecutionPhase as Reservation
 use crate::subagent::protocol::{AgentState, InterruptAcknowledgement};
 use crate::subagent::rules::{self, RuleActor, RuleContext, RuleEffect, ToolClass};
 use crate::subagent::telemetry::{
-    self, ExecutionStatus, SubagentTraceEvent, TraceEventKind, TraceRecorder,
+    ExecutionStatus, SubagentTraceEvent, TraceEventKind, TraceRecorder,
 };
 
 mod contract;
@@ -1012,7 +1012,7 @@ pub(crate) fn post_spawn(
         reservation.fenced_at_ms = Some(now_ms);
         reservation.updated_at_ms = now_ms;
         reservation.completed_at_ms = Some(now_ms);
-        reservation.token_usage = telemetry::extract_token_usage(tool_response);
+        reservation.token_usage = None;
         reservation.error_message = Some("spawn tool reported failure".to_string());
         let mut event = SubagentTraceEvent::new(
             now_ms,
@@ -1466,7 +1466,9 @@ pub(crate) fn observe_status_response(
     }
     let mut changed = false;
     let mut agent_id_hashes = Vec::new();
-    let usage = telemetry::extract_token_usage(tool_response);
+    let mut usage = tool_response
+        .map(|response| collect_terminal_task_usage(response, &ledger))
+        .unwrap_or_default();
     let mut trace_events = Vec::new();
     for (task_id, outcome) in terminal_tasks {
         let Some(reservation) = ledger.reservations.get_mut(&task_id) else {
@@ -1501,9 +1503,7 @@ pub(crate) fn observe_status_response(
                 ),
                 ExecutionOutcome::Unknown => Some("terminal outcome was not recognized".into()),
             };
-            if usage.is_some() {
-                reservation.token_usage = usage.clone();
-            }
+            reservation.token_usage = usage.remove(&task_id);
             let trace = reservation_trace(reservation);
             let success = outcome.is_success();
             let mut event = SubagentTraceEvent::new(

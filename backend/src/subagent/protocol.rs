@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::api::TokenUsage;
+
 const MAX_JSON_ENCODED_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +38,113 @@ pub(crate) struct TerminalObservation {
 pub(crate) struct AgentStatusObservation {
     pub identifiers: Vec<String>,
     pub state: AgentState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TerminalUsageObservation {
+    pub identifiers: Vec<String>,
+    pub turn_id: String,
+    pub usage: TokenUsage,
+}
+
+pub(crate) fn collect_terminal_usage_observations(
+    value: &Value,
+    target: &mut Vec<TerminalUsageObservation>,
+) {
+    let decoded = decode_json_encoded_response(value);
+    collect_terminal_usage_in_envelope(decoded.as_ref().unwrap_or(value), target, 0);
+}
+
+fn collect_terminal_usage_in_envelope(
+    value: &Value,
+    target: &mut Vec<TerminalUsageObservation>,
+    depth: usize,
+) {
+    if depth > 8 {
+        return;
+    }
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                collect_terminal_usage_in_envelope(value, target, depth + 1);
+            }
+        }
+        Value::Object(values) => {
+            if let Some(observation) = terminal_usage(value, values) {
+                target.push(observation);
+            }
+            for (key, value) in values {
+                if is_agent_collection_field(key) || is_provider_envelope_field(key) {
+                    collect_terminal_usage_in_envelope(value, target, depth + 1);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn terminal_usage(value: &Value, values: &Map<String, Value>) -> Option<TerminalUsageObservation> {
+    // 批次总量和任务正文都不能作为单个子代理的用量。
+    if values.keys().any(|key| is_agent_collection_field(key))
+        || agent_entry_state(value, values) != Some(AgentState::Terminal)
+    {
+        return None;
+    }
+    let mut identifiers = Vec::new();
+    let mut turn_id = None;
+    for (key, value) in values {
+        let key = normalize_identifier(key);
+        if matches!(
+            key.as_str(),
+            "taskname" | "agentname" | "agentid" | "subagentid" | "turnid" | "childturnid"
+        ) {
+            let text = value.as_str()?.trim();
+            if text.is_empty() {
+                return None;
+            }
+            if matches!(key.as_str(), "turnid" | "childturnid") {
+                if turn_id.is_some_and(|previous| previous != text) {
+                    return None;
+                }
+                turn_id = Some(text);
+            } else {
+                identifiers.push(text.to_string());
+            }
+        }
+    }
+    if identifiers.is_empty() {
+        return None;
+    }
+    let turn_id = turn_id?.to_string();
+    let usage = values.get("usage")?.as_object()?;
+    let mut counts = [None; 4];
+    for (key, value) in usage {
+        let index = match normalize_identifier(key).as_str() {
+            "inputtokens" | "prompttokens" => 0,
+            "outputtokens" | "completiontokens" => 1,
+            "cachedtokens" | "cachedinputtokens" => 2,
+            "reasoningtokens" | "reasoningoutputtokens" => 3,
+            _ => continue,
+        };
+        let count = value.as_u64()?;
+        if counts[index].is_some_and(|previous| previous != count) {
+            return None;
+        }
+        counts[index] = Some(count);
+    }
+    if counts.iter().all(Option::is_none) {
+        return None;
+    }
+    Some(TerminalUsageObservation {
+        identifiers,
+        turn_id,
+        usage: TokenUsage {
+            input_tokens: counts[0].unwrap_or(0),
+            output_tokens: counts[1].unwrap_or(0),
+            cached_tokens: counts[2].unwrap_or(0),
+            reasoning_tokens: counts[3].unwrap_or(0),
+        },
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -819,6 +928,52 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn terminal_usage_requires_consistent_identity_turn_and_counts() {
+        let entry = serde_json::json!({"agent_id":"reader", "status":"completed", "turn_id":"turn",
+            "usage":{"prompt_tokens":12,"completion_tokens":5,"cached_input_tokens":3,"reasoning_output_tokens":2}});
+        let mut observations = Vec::new();
+        collect_terminal_usage_observations(
+            &Value::String(serde_json::json!({"result":{"agents":[entry.clone()]}}).to_string()),
+            &mut observations,
+        );
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].usage,
+            TokenUsage {
+                input_tokens: 12,
+                output_tokens: 5,
+                cached_tokens: 3,
+                reasoning_tokens: 2
+            }
+        );
+        for (field, value) in [
+            ("turn_id", Value::Null),
+            ("turn_id", serde_json::json!(" ")),
+            ("child_turn_id", serde_json::json!("other")),
+            ("agent_id", serde_json::json!(4)),
+            ("status", serde_json::json!("running")),
+            ("usage", serde_json::json!({"input_tokens":-1})),
+            (
+                "usage",
+                serde_json::json!({"input_tokens":1,"inputTokens":2}),
+            ),
+            ("usage", serde_json::json!({"input_tokens":"12"})),
+            ("usage", serde_json::json!({})),
+        ] {
+            let mut invalid = entry.clone();
+            invalid[field] = value;
+            observations.clear();
+            collect_terminal_usage_observations(&invalid, &mut observations);
+            assert!(observations.is_empty(), "{field}");
+        }
+        observations.clear();
+        collect_terminal_usage_observations(
+            &serde_json::json!({"output":entry}),
+            &mut observations,
+        );
+        assert!(observations.is_empty());
+    }
     #[test]
     fn terminal_status_is_shared_across_envelope_shapes() {
         for value in [

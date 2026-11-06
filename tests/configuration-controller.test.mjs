@@ -11,6 +11,23 @@ const provider = { changed: false, provider: { id: "test", name: "Test", officia
 const models = { officialModels: [], officialModelIds: [], thirdPartyModels: [], manualThirdPartyModels: [], upstreamModels: [], defaultModel: "" };
 const loadResult = (patch = {}) => ({ config: config(), providerStatus: provider, modelState: models, ...patch });
 
+test("draft changes reverted to saved values clear dirty without weakening revision protection", () => {
+  const owner = createControllerHarness(new URL("../src/useDraftConfig.ts", import.meta.url), "useDraftConfig");
+  const saved = config({ localRouterEnabled: true });
+  owner.render().setPersistedConfig(saved);
+  owner.render().editConfig({ ...saved, streamMaxRetries: 5 });
+  assert.equal(owner.render().dirty, true);
+  owner.render().editConfig({ ...saved, settingsRevision: 9 });
+  assert.equal(owner.render().dirty, false);
+  owner.render().editConfig({ ...saved, streamMaxRetries: 4 });
+  owner.render().setPersistedConfig({ ...saved, settingsRevision: 0 });
+  assert.equal(owner.render().config.streamMaxRetries, 4);
+  assert.equal(owner.render().dirty, true);
+  owner.render().setPersistedConfig({ ...saved, settingsRevision: 2 });
+  assert.equal(owner.render().dirty, false);
+  owner.unmount();
+});
+
 function fixture(t, extra = {}) {
   const browser = installControllerWindow(t);
   const calls = [], notices = [], changes = [], marketplaceGuards = [];

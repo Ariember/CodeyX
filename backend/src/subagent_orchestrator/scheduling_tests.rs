@@ -44,6 +44,110 @@ fn tool(root: &Path, session: &str, task: &str, name: &str) -> Result<Option<Str
 }
 
 #[test]
+fn terminal_usage_is_attributed_per_agent_not_from_batch_or_output() {
+    let temp = tempdir().unwrap();
+    spawn(
+        temp.path(),
+        "session",
+        "reader_a",
+        "codey_quick_scan",
+        "/repo",
+    );
+    spawn(
+        temp.path(),
+        "session",
+        "reader_b",
+        "codey_quick_scan",
+        "/repo",
+    );
+    let response = json!({"usage":{"input_tokens":999}, "agents":[
+        {"agent_id":"reader_a", "task_name":"/root/reader_a", "status":"completed", "turn_id":"a",
+            "usage":{"input_tokens":11,"output_tokens":4}, "output":{"usage":{"input_tokens":888}}},
+        {"agent_id":"reader_b", "status":"completed", "turn_id":"b",
+            "usage":{"inputTokens":23,"outputTokens":5}}
+    ]});
+    observe_status_response(
+        temp.path(),
+        "runtime",
+        "session",
+        Some(&response),
+        false,
+        30,
+    )
+    .unwrap();
+    let ledger = LedgerStore::open(temp.path(), "session")
+        .unwrap()
+        .load("runtime", "session", 31)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        ledger.reservations["reader_a"]
+            .token_usage
+            .as_ref()
+            .unwrap()
+            .input_tokens,
+        11
+    );
+    assert_eq!(
+        ledger.reservations["reader_b"]
+            .token_usage
+            .as_ref()
+            .unwrap()
+            .input_tokens,
+        23
+    );
+    let trace = fs::read_to_string(crate::subagent::telemetry::trace_file(temp.path())).unwrap();
+    let completions: Vec<SubagentTraceEvent> = trace
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|event: &SubagentTraceEvent| event.event == TraceEventKind::Completed)
+        .collect();
+    assert_eq!(completions.len(), 2);
+    assert_eq!(
+        completions
+            .iter()
+            .map(|event| event.usage.as_ref().unwrap().input_tokens)
+            .sum::<u64>(),
+        34
+    );
+}
+
+#[test]
+fn terminal_usage_rejects_ambiguous_identity_turns_and_unscoped_totals() {
+    let temp = tempdir().unwrap();
+    spawn(
+        temp.path(),
+        "session",
+        "reader_a",
+        "codey_quick_scan",
+        "/repo",
+    );
+    spawn(
+        temp.path(),
+        "session",
+        "reader_b",
+        "codey_quick_scan",
+        "/repo",
+    );
+    let ledger = LedgerStore::open(temp.path(), "session")
+        .unwrap()
+        .load("runtime", "session", 12)
+        .unwrap()
+        .unwrap();
+    for response in [
+        json!({"usage":{"input_tokens":99},"agents":[{"agent_id":"reader_a","status":"completed"}]}),
+        json!({"agent_id":"reader_a","task_name":"reader_b","status":"completed","turn_id":"a","usage":{"input_tokens":1}}),
+        json!({"agent_id":"unknown","status":"completed","turn_id":"a","usage":{"input_tokens":1}}),
+        json!({"agents":[
+            {"agent_id":"reader_a","status":"completed","turn_id":"a","usage":{"input_tokens":1}},
+            {"agent_id":"reader_a","status":"completed","turn_id":"b","usage":{"input_tokens":2}}
+        ]}),
+    ] {
+        assert!(collect_terminal_task_usage(&response, &ledger).is_empty());
+    }
+}
+
+#[test]
 fn every_role_can_read_in_the_same_workspace() {
     let temp = tempdir().unwrap();
     for (index, role) in crate::config::SUBAGENT_ROLE_IDS.into_iter().enumerate() {

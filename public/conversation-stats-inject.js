@@ -2,7 +2,7 @@
 // /session/stats 返回统计范围；会话 id 取自可见 composer，隐藏会话不参与。
 (() => {
   const PROBE_KEY = "__codeyConversationStats";
-  const VERSION = 11;
+  const VERSION = 12;
   const previous = window[PROBE_KEY];
   if (previous?.installed && (previous.version === VERSION || !previous.dispose)) return;
   previous?.dispose?.();
@@ -35,7 +35,9 @@
     "aria-hidden",
   ];
   const POLL_IDLE_MS = 3_000;
+  const POLL_IDLE_MAX_MS = 12_000;
   const POLL_ACTIVE_MS = 1_100;
+  const SUBMIT_POLL_DELAY_MS = 300;
   const RESCAN_DEBOUNCE_MS = 120;
 
   let statsElement = null;
@@ -50,6 +52,8 @@
   let lastResult = null;
   let sessionGeneration = 0;
   let fetchAttempted = false;
+  let idleStreak = 0;
+  let lastStatsKey = "";
   let disposed = false;
   const listeners = [];
   const listen = (target, type, handler, options) => {
@@ -351,6 +355,8 @@
     lastResult = null;
     lastFetchOk = false;
     fetchAttempted = false;
+    idleStreak = 0;
+    lastStatsKey = "";
     setExpanded(false);
   };
 
@@ -489,7 +495,16 @@
   };
 
   const pollInterval = () => stats?.lastTurn?.status === "running" || stats?.inFlight > 0
-    ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+    ? POLL_ACTIVE_MS : Math.min(POLL_IDLE_MAX_MS, POLL_IDLE_MS * 2 ** idleStreak);
+
+  const wake = (delay = 0, invalidate = false) => {
+    if (disposed || document.visibilityState === "hidden") return;
+    idleStreak = 0;
+    lastStatsKey = "";
+    if (invalidate) sessionGeneration += 1;
+    if (fetchInFlight) refreshPending = true;
+    schedulePoll(delay);
+  };
 
   const poll = async () => {
     if (disposed || document.visibilityState === "hidden") return;
@@ -521,14 +536,22 @@
           codegraph = result.codegraph?.phase === "unavailable"
             ? codegraph && { ...codegraph, phase: "unavailable" }
             : result.codegraph ?? null;
+          const statsKey = JSON.stringify([stats, codegraph]);
+          idleStreak = stats?.lastTurn?.status !== "running" && !(stats?.inFlight > 0)
+            && statsKey === lastStatsKey ? Math.min(idleStreak + 1, 2) : 0;
+          lastStatsKey = statsKey;
         } else {
           lastFetchOk = false;
+          idleStreak = 0;
+          lastStatsKey = "";
         }
       } catch {
         if (!disposed && document.visibilityState !== "hidden") completedContext = resolveSessionContext();
         if (completedContext && requestGeneration === sessionGeneration && completedContext.sessionId === requestSessionId) {
           fetchAttempted = true;
           lastFetchOk = false;
+          idleStreak = 0;
+          lastStatsKey = "";
         }
       } finally {
         fetchInFlight = false;
@@ -651,10 +674,20 @@
         clearTimeout(pollTimer);
         clearTimeout(rescanTimer);
         pollTimer = rescanTimer = 0;
-      } else schedulePoll(0);
+      } else wake();
     });
-    listen(window, "focus", () => schedulePoll(0));
-    listen(window, "pageshow", () => schedulePoll(0));
+    listen(window, "focus", () => wake());
+    listen(window, "pageshow", () => wake());
+    const inComposer = (target) => Boolean(target && !containsStats(target)
+      && statsElement?.isConnected && statsElement.parentElement?.contains(target));
+    listen(document, "keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && inComposer(event.target)) {
+        wake(SUBMIT_POLL_DELAY_MS, true);
+      }
+    }, true);
+    listen(document, "click", (event) => {
+      if (inComposer(event.target) && event.target.closest?.("button")) wake(SUBMIT_POLL_DELAY_MS, true);
+    }, true);
     listen(window, "resize", positionPanel);
     listen(document, "scroll", positionPanel, true);
     listen(document, "pointerdown", (event) => {
@@ -680,7 +713,7 @@
         lastFetchOk,
         lastResult,
       }),
-      refresh: () => schedulePoll(0),
+      refresh: () => wake(),
       dispose: () => {
         if (disposed) return;
         disposed = true;

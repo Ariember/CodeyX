@@ -11,6 +11,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::{Map, Value};
 
+use crate::subagent::api::TokenUsage;
 use crate::subagent::lifecycle::{ExecutionOutcome, ExecutionPhase as ReservationState};
 use crate::subagent::protocol;
 
@@ -131,6 +132,44 @@ pub(super) fn collect_terminal_task_outcomes(
             .or_insert(outcome);
     }
     Ok(())
+}
+
+pub(super) fn collect_terminal_task_usage(
+    value: &Value,
+    ledger: &SessionLedger,
+) -> BTreeMap<String, TokenUsage> {
+    let mut observations = Vec::new();
+    protocol::collect_terminal_usage_observations(value, &mut observations);
+    let mut usages: BTreeMap<String, Option<(String, TokenUsage)>> = BTreeMap::new();
+    for observation in observations {
+        let tasks = observation
+            .identifiers
+            .iter()
+            .map(|id| unique_task_for_identifier(ledger, id).ok().flatten())
+            .collect::<Option<Vec<_>>>();
+        let Some(tasks) = tasks else {
+            continue;
+        };
+        let Some(task) = tasks
+            .first()
+            .filter(|first| tasks.iter().all(|task| task == *first))
+        else {
+            continue;
+        };
+        let observed = (observation.turn_id, observation.usage);
+        usages
+            .entry(task.clone())
+            .and_modify(|current| {
+                if current.as_ref() != Some(&observed) {
+                    *current = None;
+                }
+            })
+            .or_insert(Some(observed));
+    }
+    usages
+        .into_iter()
+        .filter_map(|(task, observation)| observation.map(|(_, usage)| (task, usage)))
+        .collect()
 }
 
 pub(super) fn stricter_outcome(

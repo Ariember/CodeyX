@@ -302,6 +302,39 @@ pub(super) async fn send_for_response_headers(
     tokio::time::timeout(header_timeout, send).await
 }
 
+fn is_chatgpt_codex_turn(url: &reqwest::Url) -> bool {
+    static TURN: std::sync::LazyLock<reqwest::Url> = std::sync::LazyLock::new(|| {
+        reqwest::Url::parse(&format!(
+            "{}/responses",
+            crate::codex_config::CHATGPT_CODEX_BASE_URL
+        ))
+        .expect("built-in ChatGPT URL")
+    });
+    url.scheme() == TURN.scheme()
+        && url.host_str() == TURN.host_str()
+        && url.port_or_known_default() == TURN.port_or_known_default()
+        && url.path() == TURN.path()
+}
+
+async fn compress_chatgpt_codex_turn(body: Bytes) -> Option<Bytes> {
+    fn encode(body: &[u8]) -> Option<Bytes> {
+        zstd::stream::encode_all(Cursor::new(body), 3)
+            .ok()
+            .map(Bytes::from)
+    }
+    if body.is_empty() {
+        return None;
+    }
+    // 大正文的压缩不占用异步工作线程；失败时由调用方发送原文。
+    if body.len() <= 256 * 1024 {
+        return encode(&body);
+    }
+    tokio::task::spawn_blocking(move || encode(&body))
+        .await
+        .ok()
+        .flatten()
+}
+
 /// 生命周期只允许在尚未向下游写出响应时重发。与 reasoning 回退共享两次发送预算。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn send_lifecycle_http<D, F>(
@@ -355,13 +388,29 @@ where
         lifecycle.apply_api_key(headers)?;
         await_upstream(downstream, lifecycle.mint_turn_state(client)).await??;
         lifecycle.apply_turn_state(headers)?;
-        if let Some(probe) = downstream.request_log_probe() {
-            probe.set_upstream_request_headers(&format_upstream_headers(headers));
-        }
         let payload = retained_body
             .as_ref()
             .expect("plugin retry keeps the uploaded body")
             .clone();
+        // 只压缩发往官方轮次入口的 HTTP 正文，保留原文供重试和插件处理。
+        let compressed = if plugin.is_none() && is_chatgpt_codex_turn(&url) {
+            compress_chatgpt_codex_turn(payload.clone()).await
+        } else {
+            None
+        };
+        let (payload, compressed_headers) = match compressed {
+            Some(compressed) => {
+                let mut compressed_headers = headers.clone();
+                compressed_headers.insert(CONTENT_ENCODING, HeaderValue::from_static("zstd"));
+                compressed_headers.remove(reqwest::header::CONTENT_LENGTH);
+                (compressed, Some(compressed_headers))
+            }
+            None => (payload, None),
+        };
+        let send_headers = compressed_headers.as_ref().unwrap_or(headers);
+        if let Some(probe) = downstream.request_log_probe() {
+            probe.set_upstream_request_headers(&format_upstream_headers(send_headers));
+        }
         // 以这条请求启动时的插件快照为准。上传过程中全局插件被关掉时，
         // 快照仍可能在响应头之后要求重发，正文必须还在。
         let keep_uploaded_body = lifecycle.is_active();
@@ -372,7 +421,7 @@ where
                 codey_plugin_sdk::transport::Operation::Responses,
                 client,
                 url.as_str(),
-                headers,
+                send_headers,
                 payload,
                 timeout,
                 &mut || {
@@ -596,6 +645,52 @@ impl<D: ResponsesDownstream + ?Sized> ResponsesDownstream for LifecycleDownstrea
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_chatgpt_codex_turns_are_compressed() {
+        for (url, expected) in [
+            ("https://chatgpt.com/backend-api/codex/responses", true),
+            (
+                "https://ChatGPT.com:443/backend-api/codex/responses?x=1",
+                true,
+            ),
+            (
+                "https://chatgpt.com/backend-api/codex/responses/compact",
+                false,
+            ),
+            ("https://chatgpt.com/backend-api/codex/models", false),
+            ("http://chatgpt.com/backend-api/codex/responses", false),
+            (
+                "https://chatgpt.com:8443/backend-api/codex/responses",
+                false,
+            ),
+            (
+                "https://chatgpt.com.example.com/backend-api/codex/responses",
+                false,
+            ),
+            ("https://api.openai.com/v1/responses", false),
+        ] {
+            assert_eq!(
+                is_chatgpt_codex_turn(&reqwest::Url::parse(url).unwrap()),
+                expected,
+                "{url}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn chatgpt_codex_turn_compression_round_trips_inline_and_blocking() {
+        for size in [1024, 256 * 1024 + 1] {
+            let body = Bytes::from("x".repeat(size));
+            let compressed = compress_chatgpt_codex_turn(body.clone()).await.unwrap();
+            assert!(compressed.len() < body.len());
+            assert_eq!(
+                zstd::stream::decode_all(Cursor::new(&compressed[..])).unwrap(),
+                body
+            );
+        }
+        assert!(compress_chatgpt_codex_turn(Bytes::new()).await.is_none());
+    }
 
     #[test]
     fn lifecycle_email_comes_only_from_official_route_metadata() {

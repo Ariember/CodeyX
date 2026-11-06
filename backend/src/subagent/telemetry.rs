@@ -242,54 +242,6 @@ pub(crate) fn trace_file(state_root: &Path) -> PathBuf {
     state_root.join(TRACE_FILE)
 }
 
-pub(crate) fn extract_token_usage(value: Option<&Value>) -> Option<TokenUsage> {
-    let value = value?;
-    let mut stack = vec![value];
-    while let Some(value) = stack.pop() {
-        match value {
-            Value::Object(values) => {
-                let input = unsigned_field(
-                    values,
-                    &[
-                        "input_tokens",
-                        "inputTokens",
-                        "prompt_tokens",
-                        "promptTokens",
-                    ],
-                );
-                let output = unsigned_field(
-                    values,
-                    &[
-                        "output_tokens",
-                        "outputTokens",
-                        "completion_tokens",
-                        "completionTokens",
-                    ],
-                );
-                let cached = unsigned_field(values, &["cached_tokens", "cachedTokens"]);
-                let reasoning = unsigned_field(values, &["reasoning_tokens", "reasoningTokens"]);
-                if input.is_some() || output.is_some() || cached.is_some() || reasoning.is_some() {
-                    return Some(TokenUsage {
-                        input_tokens: input.unwrap_or(0),
-                        output_tokens: output.unwrap_or(0),
-                        cached_tokens: cached.unwrap_or(0),
-                        reasoning_tokens: reasoning.unwrap_or(0),
-                    });
-                }
-                stack.extend(values.values());
-            }
-            Value::Array(values) => stack.extend(values),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn unsigned_field(values: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<u64> {
-    keys.iter()
-        .find_map(|key| values.get(*key).and_then(Value::as_u64))
-}
-
 fn hash_identifier(value: &str) -> String {
     crate::fs_util::sha256_hex_str(value)
 }
@@ -297,25 +249,6 @@ fn hash_identifier(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn token_usage_accepts_common_provider_shapes_without_payload_capture() {
-        let usage = extract_token_usage(Some(&json!({
-            "result": {
-                "usage": {
-                    "prompt_tokens": 12,
-                    "completion_tokens": 5,
-                    "cached_tokens": 3,
-                    "reasoning_tokens": 2
-                }
-            }
-        })))
-        .unwrap();
-        assert_eq!(usage.input_tokens, 12);
-        assert_eq!(usage.output_tokens, 5);
-        assert_eq!(usage.input_tokens + usage.output_tokens, 17);
-    }
 
     #[test]
     fn trace_records_only_hashed_runtime_session_task_and_agent_ids() {
