@@ -1,6 +1,6 @@
 // Keep Codex's native model allowlist aligned with the current CodeyX channel.
 (() => {
-  const patchVersion = "72";
+  const patchVersion = "73";
   const nativeSelectionOnly = window.__codeyNativeModelSelectionOnly === true;
   const officialProviderId = "openai";
   const localRouterProviderId = "codey_router";
@@ -3111,7 +3111,7 @@
   };
   const handleInteraction = (event) => withModelPresentation(() => {
     const pickerInteraction = Boolean(
-      event?.target?.closest?.(`${groupedMenuSelector}, [aria-haspopup]`),
+      event?.target?.closest?.(`${groupedMenuSelector}, ${modelPickerTriggerSelector}`),
     );
     if (event?.type === "keydown"
       && (!pickerInteraction || !["Enter", " ", "ArrowDown"].includes(event.key))) return;

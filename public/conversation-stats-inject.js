@@ -2,7 +2,7 @@
 // /session/stats 返回统计范围；会话 id 取自可见 composer，隐藏会话不参与。
 (() => {
   const PROBE_KEY = "__codeyConversationStats";
-  const VERSION = 10;
+  const VERSION = 11;
   const previous = window[PROBE_KEY];
   if (previous?.installed && (previous.version === VERSION || !previous.dispose)) return;
   previous?.dispose?.();
@@ -368,8 +368,13 @@
   };
 
   const setText = (element, value) => {
-    // 相同 textContent 仍会替换文本节点，触发其他页面观察器。
-    if (element.textContent !== value) element.textContent = value;
+    if (element.textContent === value) return;
+    // 保留文本节点，避免统计更新触发宿主 :has() 的整树样式重算。
+    if (element.childNodes?.length === 1 && element.firstChild?.nodeType === 3) {
+      element.firstChild.nodeValue = value;
+    } else {
+      element.textContent = value;
+    }
   };
 
   const setValue = (object, key, value) => {

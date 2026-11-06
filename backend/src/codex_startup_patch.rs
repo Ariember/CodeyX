@@ -2332,7 +2332,9 @@ mod tests {
         assert!(!expression.contains("__REQUIRE_APP_SERVER_RUNTIME_OVERRIDES__"));
         assert!(!expression.contains("\"__CODEY_ERROR_LOGGER_EXECUTABLE__\""));
         assert!(!expression.contains("__CODEY_STARTUP_SPLASH__"));
-        assert!(expression.contains("const rawCodeyStartupSplash = \"<style>"));
+        assert!(expression.contains(
+            r#"const rawCodeyStartupSplash = "<style id=\"codey-startup-splash-style\">"#
+        ));
     }
 
     #[test]

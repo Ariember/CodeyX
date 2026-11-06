@@ -11,7 +11,7 @@ const ready = '<main><button>New chat</button></main>';
 async function open(page, { managed = false, query = "", content = loader } = {}) {
   await page.route("http://startup.test/**", route => route.fulfill({
     contentType: "text/html",
-    body: `<!doctype html><html><head><meta charset="utf-8"></head><body>${managed ? "" : markup}<div id="root">${content}</div></body></html>`,
+    body: `<!doctype html><html><head><meta charset="utf-8"><style id="host-style">button { font: inherit; }</style></head><body>${managed ? "" : markup}<div id="root">${content}</div></body></html>`,
   }));
   if (managed) {
     await page.addInitScript(() => {
@@ -44,6 +44,12 @@ async function open(page, { managed = false, query = "", content = loader } = {}
 
 async function render(page, html) {
   await page.locator("#root").evaluate((root, content) => { root.innerHTML = content; }, html);
+}
+
+async function expectSplashDisposed(page) {
+  await expect(page.locator(".codey-splash")).toHaveCount(0);
+  await expect(page.locator("style")).toHaveCount(1);
+  await expect(page.locator("#host-style")).toHaveCount(1);
 }
 
 test("CSS fallback covers slow startup, empty roots and React loading until a usable screen appears", async ({ page }) => {
@@ -86,10 +92,10 @@ test("managed splash cancels a premature exit, removes itself after ready and ne
   await mkdir("output/playwright", { recursive: true });
   await page.screenshot({ path: "output/playwright/startup-lifecycle-loading.png" });
   await render(page, ready);
-  await expect(splash).toHaveCount(0);
+  await expectSplashDisposed(page);
   expect(await page.evaluate(() => window.activeStartupObservers)).toBe(0);
   await page.addScriptTag({ content: script });
-  await expect(splash).toHaveCount(0);
+  await expectSplashDisposed(page);
   await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
   await page.screenshot({ path: "output/playwright/startup-lifecycle-ready.png" });
 });
@@ -100,7 +106,7 @@ for (const [name, content] of [["login", '<form><input aria-label="Email"><butto
     await open(page, { managed: true });
     await expect(page.locator(".codey-splash")).toBeVisible();
     await render(page, content);
-    await expect(page.locator(".codey-splash")).toHaveCount(0);
+    await expectSplashDisposed(page);
     expect(await page.evaluate(() => window.activeStartupObservers)).toBe(0);
   });
 }
@@ -112,6 +118,29 @@ test("secondary windows and already ready primary windows do not install a splas
   await open(page, { managed: true, content: ready });
   await expect(page.locator(".codey-splash")).toHaveCount(0);
   expect(await page.evaluate(() => window.activeStartupObservers)).toBe(0);
+});
+
+for (const reason of ["pagehide", "removed splash", "removed root"]) {
+  test(`managed splash removes its own stylesheet on ${reason}`, async ({ page }) => {
+    await open(page, { managed: true });
+    await expect(page.locator(".codey-splash")).toBeVisible();
+    await page.evaluate(reason => {
+      if (reason === "pagehide") window.dispatchEvent(new Event("pagehide"));
+      else document.querySelector(reason === "removed splash" ? ".codey-splash" : "#root").remove();
+    }, reason);
+    await expectSplashDisposed(page);
+    expect(await page.evaluate(() => window.activeStartupObservers)).toBe(0);
+    await page.addScriptTag({ content: script });
+    await expectSplashDisposed(page);
+  });
+}
+
+test("late injection removes the CSS fallback and its stylesheet after startup", async ({ page }) => {
+  await open(page, { content: ready });
+  await expect(page.locator("style")).toHaveCount(2);
+  await expect(page.locator(".codey-splash")).toBeHidden();
+  await page.addScriptTag({ content: script });
+  await expectSplashDisposed(page);
 });
 
 test("host theme markers override system preference and update while loading", async ({ page }) => {

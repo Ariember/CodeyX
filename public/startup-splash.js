@@ -26,10 +26,12 @@
     document.removeEventListener("DOMContentLoaded", update);
     window.removeEventListener("pagehide", dispose);
     splash?.removeEventListener("animationend", finish);
+    splash?.remove();
+    // Startup :has() rules must not keep invalidating styles after the splash exits.
+    document.getElementById("codey-startup-splash-style")?.remove();
   };
   const finish = (event) => {
     if (event.target !== splash || event.animationName !== "codey-splash-exit") return;
-    splash.remove();
     dispose();
   };
   const update = () => {
@@ -51,7 +53,6 @@
         splash = document.querySelector(".codey-splash");
       }
       if (getComputedStyle(splash).visibility === "hidden") {
-        splash.remove();
         dispose();
         return;
       }

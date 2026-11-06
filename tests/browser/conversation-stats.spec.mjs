@@ -3,6 +3,49 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("../../public/conversation-stats-inject.js", import.meta.url));
 
+test("changing statistics preserves text nodes without structural mutations", async ({ page }) => {
+  await page.setContent('<main><div data-above-composer-conversation-id="conversation-1"></div><textarea></textarea></main>');
+  await page.evaluate(() => {
+    window.statsResponse = { status: "ok", stats: { totalTokens: 100 } };
+    window.__codexSessionDeleteBridge = async () => window.statsResponse;
+  });
+  await page.addScriptTag({ path: script });
+  const total = page.locator(".codey-cs-total");
+  await expect(total).toHaveText("100 tok");
+  await page.evaluate(() => {
+    const refs = document.getElementById("codey-conversation-stats").__codeyCs;
+    window.totalTextNode = refs.total.firstChild;
+    window.statsMutations = [];
+    const observer = new MutationObserver(records => window.statsMutations.push(...records.map(record => record.type)));
+    for (const root of [refs.total, refs.fields.totalTokens]) {
+      observer.observe(root, { childList: true, characterData: true, subtree: true });
+    }
+    window.statsResponse = { status: "ok", stats: { totalTokens: 200 } };
+    window.__codeyConversationStats.refresh();
+  });
+  await expect(total).toHaveText("200 tok");
+  await expect(page.locator('[data-field="totalTokens"]')).toHaveText("200 tok");
+  expect(await total.evaluate(element => element.firstChild === window.totalTextNode)).toBe(true);
+  expect(await page.evaluate(() => window.statsMutations)).toEqual(["characterData", "characterData"]);
+
+  await page.evaluate(async () => {
+    window.statsMutations = [];
+    await new Promise(resolve => {
+      window.__codexSessionDeleteBridge = async () => { setTimeout(resolve, 0); return window.statsResponse; };
+      window.__codeyConversationStats.refresh();
+    });
+  });
+  expect(await page.evaluate(() => window.statsMutations)).toEqual([]);
+
+  for (const content of ["", "<strong>old</strong>", "old<span>content</span>"]) {
+    await total.evaluate((element, html) => { element.innerHTML = html; }, content);
+    await page.evaluate(() => window.__codeyConversationStats.refresh());
+    await expect(total).toHaveText("200 tok");
+    expect(await total.evaluate(element => element.childNodes.length === 1 && element.firstChild.nodeType === Node.TEXT_NODE)).toBe(true);
+  }
+  await page.evaluate(() => window.__codeyConversationStats.dispose());
+});
+
 for (const theme of ["light", "dark"]) {
   test(`会话状态条 ${theme} 主题可打开详情、键盘关闭并适应窄屏`, async ({ page }) => {
     const errors = [];

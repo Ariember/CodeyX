@@ -1,7 +1,7 @@
 // CLI-only launches cannot install the main-process startup patch. Operate on
 // the native shared instances instead; keep application and voice RPCs intact.
 (() => {
-  const version = 1;
+  const version = 2;
   const slimPet = ["__CODEY_SLIM_PET__"][0] === "true";
   const previous = window.__codeyRuntimeOptimizations;
   if (previous?.version === version && previous.slimPet === slimPet && previous.isActive?.()) return;
@@ -17,6 +17,83 @@
   const noHeartbeat = () => {};
   let suppressedHeartbeats = 0;
   let suppressedPrewarms = 0;
+  const document = window.document;
+  const checkedStyleSheets = new WeakSet();
+  const markedTabs = new Set();
+  const tabsAttribute = "data-app-shell-tabs";
+  const expandedAttribute = "data-browser-sidebar-chrome-expanded";
+  const expandedMarker = "data-codey-sidebar-expanded";
+  const tabsSelector = `[${tabsAttribute}="true"]`;
+  const expandedSelector = `[${expandedAttribute}="true"]`;
+  const nativeTitlebarSelector = `[data-codex-window-type="electron"] :is([data-app-shell-titlebar], ${tabsSelector}:has(${expandedSelector})) [data-app-shell-tab-strip-controller]`;
+  let titlebarObserver = null;
+
+  const syncTabs = (tabs) => {
+    const expanded = tabs.isConnected && tabs.matches(tabsSelector)
+      && tabs.querySelector(expandedSelector) !== null;
+    if (expanded) {
+      if (tabs.getAttribute(expandedMarker) !== "true") tabs.setAttribute(expandedMarker, "true");
+      markedTabs.add(tabs);
+    } else if (markedTabs.delete(tabs) && tabs.getAttribute(expandedMarker) === "true") {
+      tabs.removeAttribute(expandedMarker);
+    }
+  };
+  const ensureTitlebarObserver = () => {
+    if (titlebarObserver) return true;
+    if (!document || typeof window.MutationObserver !== "function") return false;
+    titlebarObserver = new window.MutationObserver((records) => {
+      const candidates = new Set();
+      for (const record of records) {
+        const target = record.target;
+        if (target.nodeType !== 1) continue;
+        if (record.attributeName === tabsAttribute) candidates.add(target);
+        for (let tabs = target.closest(tabsSelector); tabs; tabs = tabs.parentElement?.closest(tabsSelector)) {
+          candidates.add(tabs);
+        }
+        for (const node of record.addedNodes || []) {
+          if (node.nodeType !== 1) continue;
+          if (node.matches(tabsSelector)) candidates.add(node);
+          for (const tabs of node.querySelectorAll(tabsSelector)) candidates.add(tabs);
+        }
+      }
+      for (const tabs of markedTabs) if (!tabs.isConnected) candidates.add(tabs);
+      for (const tabs of candidates) syncTabs(tabs);
+    });
+    titlebarObserver.observe(document, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: [tabsAttribute, expandedAttribute],
+    });
+    for (const tabs of document.querySelectorAll(tabsSelector)) syncTabs(tabs);
+    return true;
+  };
+  const patchStyleRules = (rules) => {
+    for (const rule of rules) {
+      const original = rule.selectorText;
+      if ((original === nativeTitlebarSelector || original === `${nativeTitlebarSelector} *`)
+        && ensureTitlebarObserver()) {
+        // Native :has() invalidates the entire window on unrelated childList changes.
+        const replacement = original.replace(`:has(${expandedSelector})`, `[${expandedMarker}="true"]`);
+        rule.selectorText = replacement;
+        if (rule.selectorText === replacement) restores.push(() => {
+          if (rule.selectorText === replacement) rule.selectorText = original;
+        });
+      }
+      if (rule.cssRules?.length) patchStyleRules(rule.cssRules);
+    }
+  };
+  const patchStyleSheet = (sheet) => {
+    if (disposed || !sheet || checkedStyleSheets.has(sheet)) return;
+    try {
+      const rules = sheet.cssRules;
+      checkedStyleSheets.add(sheet);
+      patchStyleRules(rules);
+    } catch { /* Cross-origin and unknown native styles remain unchanged. */ }
+  };
+  const onStylesheetLoad = (event) => {
+    if (event.target?.tagName === "LINK") patchStyleSheet(event.target.sheet);
+  };
+  document?.addEventListener("load", onStylesheetLoad, true);
+  for (const sheet of document?.styleSheets || []) patchStyleSheet(sheet);
 
   const replaceMethod = (target, key, replacement) => {
     const own = Object.getOwnPropertyDescriptor(target, key);
@@ -149,9 +226,15 @@
       disposed = true;
       window.clearTimeout(retryTimer);
       window.removeEventListener("message", onMessage, true);
+      document?.removeEventListener("load", onStylesheetLoad, true);
+      titlebarObserver?.disconnect();
       for (const restore of restores.reverse()) {
         try { restore(); } catch { /* Do not overwrite native replacements. */ }
       }
+      for (const tabs of markedTabs) {
+        if (tabs.getAttribute(expandedMarker) === "true") tabs.removeAttribute(expandedMarker);
+      }
+      markedTabs.clear();
       // Restore heartbeat scheduling only when native interactions still exist.
       for (const tracker of trackers) {
         if (tracker.activeInteractions.size > 0 && tracker.ensureHeartbeat !== noHeartbeat) {

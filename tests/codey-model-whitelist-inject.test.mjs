@@ -1044,7 +1044,7 @@ test("a backend-pushed catalog updates immediately without a nested bridge reque
   const { patch } = runtime;
   const eventsBeforePush = client.events.length;
 
-  assert.equal(patch.version, "72");
+  assert.equal(patch.version, "73");
   assert.equal(await patch.setCatalog({
     status: "ok",
     models: ["gpt-5.6-sol", "provider-hot-pushed"],
@@ -4238,6 +4238,50 @@ test("ordinary clicks do not discover new React query clients", async () => {
   await runtime.runPendingTimers();
   assert.equal(graphVisits, 0);
   assert.deepEqual(nextClient.models(), ["old"]);
+  assert.equal(runtime.wildcardScanCount(), 1);
+  runtime.patch.dispose();
+});
+
+test("non-model dialogs do not rediscover React query clients", async () => {
+  const body = new FakeElementCore("body");
+  const dialogButton = body.appendChild(new FakeElementCore("button", {
+    attributes: { "aria-haspopup": "dialog" },
+  }));
+  const nextClient = activeModelQueryClient(["old"]);
+  const runtime = await loadPatch({
+    status: "ok", models: ["current"], default_model: "current",
+  }, [statsigClient()], { documentBody: body, queryClient: activeModelQueryClient(["old"]) });
+  let graphVisits = 0;
+  body.__reactFiber$codeyTest.memoizedProps = new Proxy({ queryClient: nextClient }, {
+    ownKeys(target) { graphVisits += 1; return Reflect.ownKeys(target); },
+  });
+
+  for (const type of ["pointerdown", "focusin", "click", "keydown"]) {
+    runtime.dispatchDocumentEvent(type, { target: dialogButton, key: "Enter" });
+  }
+  await runtime.runPendingTimers();
+  assert.equal(graphVisits, 0);
+  assert.deepEqual(nextClient.models(), ["old"]);
+  runtime.patch.dispose();
+});
+
+test("listbox picker discovers replacement clients exposed through React props", async () => {
+  const body = new FakeElementCore("body");
+  const trigger = body.appendChild(new FakeElementCore("button", {
+    attributes: { "aria-haspopup": "listbox" },
+  }));
+  const firstClient = activeModelQueryClient(["old"]);
+  body.__reactProps$codeyTest = { queryClient: firstClient };
+  const runtime = await loadPatch({
+    status: "ok", models: ["current"], default_model: "current",
+  }, [statsigClient()], { documentBody: body });
+  assert.deepEqual(firstClient.models(), ["current"]);
+
+  const nextClient = activeModelQueryClient(["old"]);
+  body.__reactProps$codeyTest.queryClient = nextClient;
+  runtime.dispatchDocumentEvent("pointerdown", { target: trigger });
+  await runtime.runPendingTimers();
+  assert.deepEqual(nextClient.models(), ["current"]);
   assert.equal(runtime.wildcardScanCount(), 1);
   runtime.patch.dispose();
 });
