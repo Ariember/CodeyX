@@ -2080,11 +2080,13 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let websocket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let websocket_address = websocket.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
             assert_ne!(stream.read(&mut request).await.unwrap(), 0);
-            let body = json!([{"id":"main", "type":"page", "title":"Codex", "url":"app://-/index.html", "webSocketDebuggerUrl":format!("ws://{address}")}]).to_string();
+            let body = json!([{"id":"main", "type":"page", "title":"Codex", "url":"app://-/index.html", "webSocketDebuggerUrl":format!("ws://{websocket_address}")}]).to_string();
             stream
                 .write_all(
                     format!(
@@ -2096,7 +2098,7 @@ mod tests {
                 .await
                 .unwrap();
             drop(stream);
-            let (stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = websocket.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             let message = socket.next().await.unwrap().unwrap();
             let command: serde_json::Value =
@@ -2115,7 +2117,7 @@ mod tests {
                 None | Some(Err(_)) | Some(Ok(Message::Close(_)))
             ));
             assert!(
-                tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                tokio::time::timeout(Duration::from_millis(200), websocket.accept())
                     .await
                     .is_err()
             );

@@ -101,6 +101,8 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let websocket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let websocket_address = websocket.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
@@ -108,7 +110,7 @@ mod tests {
             let body = json!([
                 {"id":"main","type":"page","title":"","url":"app://-/index.html","webSocketDebuggerUrl":"ws://main"},
                 {"id":"sandbox","type":"webview","title":"","url":"https://example.test/","webSocketDebuggerUrl":"ws://skip"},
-                {"id":"chat","type":"page","title":"","url":"app://-/detached-window.html","webSocketDebuggerUrl":format!("ws://{address}")}
+                {"id":"chat","type":"page","title":"","url":"app://-/detached-window.html","webSocketDebuggerUrl":format!("ws://{websocket_address}")}
             ]).to_string();
             stream
                 .write_all(
@@ -121,7 +123,7 @@ mod tests {
                 .await
                 .unwrap();
             drop(stream);
-            let (stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = websocket.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             while let Some(Ok(message)) = socket.next().await {
                 let request: serde_json::Value =

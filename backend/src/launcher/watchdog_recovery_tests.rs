@@ -56,7 +56,18 @@ impl MockCdp {
                 let state = http_state.clone();
                 connections.spawn(async move {
                     let mut request = [0; 4096];
-                    if socket.read(&mut request).await.unwrap() == 0 {
+                    let size = socket.read(&mut request).await.unwrap();
+                    if size == 0 {
+                        return;
+                    }
+                    // Match Chrome's localhost-only discovery so each round is counted once.
+                    if !String::from_utf8_lossy(&request[..size])
+                        .lines()
+                        .any(|line| line.eq_ignore_ascii_case(&format!("host: localhost:{port}")))
+                    {
+                        let _ = socket
+                            .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .await;
                         return;
                     }
                     state.discoveries.fetch_add(1, Ordering::SeqCst);
