@@ -5,7 +5,6 @@ import {
   IconDeviceMobile,
   IconLayoutDashboard,
   IconMessages,
-  IconNetwork,
   IconPlugConnected,
   IconRoute,
   IconServer,
@@ -17,7 +16,6 @@ import {
 const SETTINGS_PAGES = [
   { id: "overview", title: "基础功能", icon: IconLayoutDashboard, group: "核心配置" },
   { id: "models", title: "线路与模型", icon: IconRoute, group: "核心配置" },
-  { id: "network", title: "网络代理", icon: IconNetwork, group: "核心配置" },
   { id: "prompt", title: "提示词优化", icon: IconSparkles, group: "核心配置" },
   { id: "subagents", title: "子代理优化", icon: IconUsersGroup, group: "核心配置" },
   { id: "remote", title: "远程控制", icon: IconDeviceMobile, group: "运行管理" },

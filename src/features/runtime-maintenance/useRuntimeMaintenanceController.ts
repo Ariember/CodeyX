@@ -43,7 +43,6 @@ export function useRuntimeMaintenanceController({ active, config, onConfigChange
   const readGeneration = useRef(0);
   const refreshPending = useRef(false);
   const timers = useRef(new Set<number>());
-  const restartPending = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -98,22 +97,12 @@ export function useRuntimeMaintenanceController({ active, config, onConfigChange
     setInjectionRepairRequested(false);
     const confirmed = isMainProcessInjectionConfirmed(status);
     setNotice({
-      tone: status.startupError || !confirmed ? "error" : status.startupWarning ? "info" : "success",
+      tone: status.startupError || !confirmed ? "error" : "success",
       text: status.startupError || (confirmed
-        ? `主进程注入已修复，Codex 已自动重启${status.startupWarning ? `；${status.startupWarning}` : ""}`
+        ? "主进程注入已修复，Codex 已自动重启"
         : "尚未确认主进程注入修复成功，请查看运行状态或失败提示"),
     });
-  }, [active, injectionRepairRequested, status.restartInProgress, status.startupError, status.startupWarning, status.running, status.maintenance, setNotice]);
-
-  useEffect(() => {
-    if (!active) return;
-    if (status.restartInProgress) { restartPending.current = true; return; }
-    if (!restartPending.current) return;
-    restartPending.current = false;
-    if (!injectionRepairRequested && !status.startupError && status.startupWarning) {
-      setNotice({ tone: "info", text: status.startupWarning });
-    }
-  }, [active, status.restartInProgress, status.startupError, status.startupWarning, injectionRepairRequested, setNotice]);
+  }, [active, injectionRepairRequested, status.restartInProgress, status.startupError, status.running, status.maintenance, setNotice]);
 
   const blocked = isBusy || (injectionRepairRequested && !restartStatusError);
   async function run(name: string, action: (current: () => boolean) => Promise<void>) {
@@ -158,7 +147,7 @@ export function useRuntimeMaintenanceController({ active, config, onConfigChange
       void run("restart", async current => {
         const next = await refreshStatus();
         if (current()) setNotice({ tone: next.startupError ? "error" : "info", text: next.startupError || (next.restartInProgress
-          ? "Codex 仍在重启，请稍候" : next.startupWarning || (next.running ? "Codex 已运行" : "Codex 未运行")) });
+          ? "Codex 仍在重启，请稍候" : (next.running ? "Codex 已运行" : "Codex 未运行")) });
       });
       return;
     }

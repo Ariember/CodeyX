@@ -137,8 +137,6 @@ pub struct AppState {
     runtime_handle: Option<tokio::runtime::Handle>,
     /// 官方账号授权、更新检查与模型拉取共用的客户端，随系统代理变化重建。
     pub http_client: crate::system_proxy_client::SystemProxyClient,
-    /// Official token refresh clients keyed by account proxy URL.
-    official_proxied_clients: BlockingMutex<HashMap<String, reqwest::Client>>,
     #[cfg(test)]
     pub webhook_http_client_override: Option<reqwest::Client>,
     /// Built on first use: the login/sync client is only needed for WeChat
@@ -284,7 +282,6 @@ impl Default for AppState {
                     .connect_timeout(Duration::from_secs(5))
             })
             .expect("shared Codey HTTP client should be constructible"),
-            official_proxied_clients: BlockingMutex::new(HashMap::new()),
             #[cfg(test)]
             webhook_http_client_override: None,
             wechat_claw_login_http_client: std::sync::OnceLock::new(),
@@ -369,14 +366,6 @@ fn bridge_string_array(payload: &Value, name: &str, limit: usize) -> Vec<String>
 }
 
 impl AppState {
-    pub(crate) async fn proxy_for_profile(
-        &self,
-        profile: &crate::config::ProviderProfile,
-    ) -> Result<Option<String>, String> {
-        let proxy = profile.upstream_proxy.trim();
-        Ok((!proxy.is_empty()).then(|| proxy.to_string()))
-    }
-
     /// Codey's own store of ChatGPT accounts, kept next to the config file.
     pub(crate) fn official_accounts(&self) -> OfficialAccountStore {
         OfficialAccountStore::for_config_path(self.store.path())
@@ -1731,8 +1720,6 @@ async fn save_codey_config_locked(
     config.protect_crashpad_pending = config_input.protect_crashpad_pending;
     config.slim_codex_pet = config_input.slim_codex_pet;
     config.gpu_launch_mode = config_input.gpu_launch_mode;
-    let codex_launch_proxy = config_input.codex_launch_proxy.trim();
-    config.codex_launch_proxy = codex_launch_proxy.to_string();
     let fast_context_tools_status = current_fast_context_tools_status();
     config.fast_context_tools = embedded_fast_context_tools_enabled(
         config_input.fast_context_tools,
@@ -2659,7 +2646,6 @@ async fn query_official_account_usage(
         // 线路菜单里更新，后台轮询不会悄悄改账号信息。
         return query_stored_official_account_usage(state, force_refresh, account_id, false).await;
     }
-    let official_proxy;
     {
         let config = state.config.read().await;
         if !official_account_available_for_usage(&config) {
@@ -2669,31 +2655,13 @@ async fn query_official_account_usage(
                 "message": "当前线路列表中没有可用的官方账号线路",
             });
         }
-        // 账号列表为空时额度只能来自 Codex 登录本身，出口代理取第一条官方
-        // 线路，避免用另一个账号的地区查询额度。
-        official_proxy = config
-            .profiles
-            .iter()
-            .find(|profile| profile.enabled && profile.official_account)
-            .cloned();
     }
-
-    let official_proxy = match official_proxy {
-        Some(profile) => match state.proxy_for_profile(&profile).await {
-            Ok(proxy) => Some(proxy),
-            Err(message) => {
-                return json!({"status":"error", "reason":"proxy_unavailable", "message":message});
-            }
-        },
-        None => None,
-    };
 
     let home = codex_home();
     account_usage::query_shared_snapshot_at(
         &state.account_usage_cache,
         &account_usage::codex_auth_path(home),
         force_refresh,
-        official_proxy.as_ref().and_then(|proxy| proxy.as_deref()),
     )
     .await
 }
@@ -2779,17 +2747,10 @@ async fn query_stored_official_account_usage(
             "message": reason,
         });
     }
-    let upstream_proxy = match official_account_usage_proxy(state, &account_id).await {
-        Ok(proxy) => proxy,
-        Err(message) => {
-            return json!({"status":"error", "reason":"proxy_unavailable", "message":message});
-        }
-    };
     let snapshot = account_usage::query_shared_snapshot_at(
         &state.account_usage_cache,
         &auth_path,
         force_refresh,
-        upstream_proxy.as_deref(),
     )
     .await;
     // 官方额度接口每次都带当前的套餐类型：降级或升级之后它最先变化，账号
@@ -2897,27 +2858,6 @@ async fn mark_official_account_invalid(
     false
 }
 
-/// Resolve the manual proxy of the account's current route.
-async fn official_account_usage_proxy(
-    state: &Arc<AppState>,
-    account_id: &str,
-) -> Result<Option<String>, String> {
-    let profile = state
-        .config
-        .read()
-        .await
-        .profiles
-        .iter()
-        .find(|profile| {
-            profile.official_account && profile.official_account_id.as_deref() == Some(account_id)
-        })
-        .cloned();
-    match profile {
-        Some(profile) => state.proxy_for_profile(&profile).await,
-        None => Ok(None),
-    }
-}
-
 #[cfg(test)]
 fn account_usage_enabled_for_config(config: &CodeyConfig) -> bool {
     config.show_account_usage_in_header && official_account_available_for_usage(config)
@@ -2962,7 +2902,6 @@ pub(super) fn config_requires_restart_with_route_status(
         || applied.stream_max_retries != current.stream_max_retries
         || applied.slim_codex_pet != current.slim_codex_pet
         || applied.gpu_launch_mode != current.gpu_launch_mode
-        || applied.codex_launch_proxy != current.codex_launch_proxy
         || applied.fast_context_tools != current.fast_context_tools
         || applied.conversation_git.enabled != current.conversation_git.enabled
         || applied.subagent_optimization != current.subagent_optimization

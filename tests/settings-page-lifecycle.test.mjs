@@ -7,7 +7,7 @@ const source = await readFile(new URL("../src/SettingsLayout.tsx", import.meta.u
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
-const pages = ["overview", "models", "network", "prompt", "subagents", "remote", "sessions", "backup", "tools", "plugins", "mcp", "skills"];
+const pages = ["overview", "models", "prompt", "subagents", "remote", "sessions", "backup", "tools", "plugins", "mcp", "skills"];
 
 // 与现有组件测试一样，用轻量 hook/组件身份模型验证生命周期，无需 DOM 或新增依赖。
 function layoutHarness() {
@@ -95,6 +95,7 @@ test("initial overview mounts alone while every menu retains its section associa
   assert.deepEqual(harness.mounts, ["overview"]);
   assert.deepEqual(harness.callbacks, []);
   assert.equal(harness.find("section").length, pages.length);
+  assert.ok(harness.find("button").every(node => !node.props.id.endsWith("-menu-network")));
   for (const button of harness.find("button")) {
     const section = harness.find("section").find(node => node.props.id === button.props["aria-controls"]);
     assert.ok(section);

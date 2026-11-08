@@ -125,7 +125,6 @@ function modelSectionProps() {
           supportsRemoteCompaction: false,
           supportsWebsockets: false,
           upstreamProtocol: "openaiResponses",
-          upstreamProxy: "",
         },
       ],
       promptOptimization: {},

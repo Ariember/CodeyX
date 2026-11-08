@@ -68,7 +68,6 @@ export function useRouteEditorController(options: Options) {
       routeName: account?.routeName ?? profile.name,
       routeShortName: account?.routeShortName || profile.shortName || fallbackRouteShortName(profile.name),
       baseUrl: account?.baseUrl ?? "",
-      upstreamProxy: profile.upstreamProxy ?? "",
     } : null);
     setOfficialModelDraft(official && officialScope === "models" ? officialRouteModelDraft(config, profile, officialCatalog) : []);
     setOfficialModelContextDraft(official && officialScope === "models" ? config.modelContextByProvider?.[routeProviderId(profile)] || {} : {});
@@ -153,8 +152,6 @@ export function useRouteEditorController(options: Options) {
         options.showAccountUsageInHeader,
         routeDraft.enabled !== false,
         officialDialogScope === "models" ? officialModelContextDraft : undefined,
-        // 模型同步保留代理及账号设置；连接编辑不覆盖模型上下文。
-        savingSettings ? officialRouteDraft?.upstreamProxy ?? routeDraft.upstreamProxy ?? "" : undefined,
         savingSettings && accountId && officialRouteDraft ? {
           accountId, routeName: officialRouteDraft.routeName.trim(),
           routeShortName: officialRouteDraft.routeShortName.trim(), baseUrl: officialRouteDraft.baseUrl.trim(),

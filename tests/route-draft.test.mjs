@@ -6,7 +6,7 @@ const { createRouteDraft, validateRouteDraft, routeProtocolPatch } = createModul
   new URL("../src/features/routes/draft.ts", import.meta.url),
 ).exports;
 const validRoute = () => ({ ...createRouteDraft("route-a"), shortName: "主", baseUrl: "https://example.com/v1", apiKey: "test-key" });
-const noErrors = { name: "", shortName: "", baseUrl: "", apiKey: "", upstreamProxy: "" };
+const noErrors = { name: "", shortName: "", baseUrl: "", apiKey: "" };
 
 test("线路草稿使用注入 ID，能力默认关闭且可变字段互不共享", () => {
   const first = createRouteDraft("first"), second = createRouteDraft("second");
@@ -30,15 +30,12 @@ test("线路校验保留可空名称、Unicode 上限和已保存密钥语义", 
   assert.equal(validateRouteDraft({ ...route, shortName: " " }, []).shortName, "请输入短名称");
 });
 
-test("线路校验拦截无效地址与代理，官方账号保留独立校验入口", () => {
+test("线路校验拦截无效地址，官方账号保留独立校验入口", () => {
   const route = validRoute();
   assert.match(validateRouteDraft({ ...route, baseUrl: "" }, []).baseUrl, /请输入/);
   assert.match(validateRouteDraft({ ...route, baseUrl: "ftp://example.com" }, []).baseUrl, /HTTP/);
   assert.match(validateRouteDraft({ ...route, baseUrl: "https://user:pass@example.com" }, []).baseUrl, /不能包含/);
-  assert.match(validateRouteDraft({ ...route, upstreamProxy: "invalid" }, []).upstreamProxy, /格式无效/);
-  assert.equal(validateRouteDraft({ ...route, upstreamProxy: "socks5h://localhost:1080" }, []).upstreamProxy, "");
   assert.deepEqual(validateRouteDraft({ ...createRouteDraft("official"), authMode: "officialAccount" }, []), noErrors);
-  assert.match(validateRouteDraft({ ...route, authMode: "officialAccount", upstreamProxy: "ftp://example.com" }, []).upstreamProxy, /必须是/);
 });
 
 test("切换协议清除 Responses 专有能力，不恢复旧开关或修改原草稿", () => {

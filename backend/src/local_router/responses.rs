@@ -252,7 +252,6 @@ impl RouterServer {
                             &self.account_usage_cache,
                             &auth_path,
                             args.force_refresh.unwrap_or(false),
-                            route.upstream_proxy.as_deref(),
                         )
                         .await
                     }
@@ -905,7 +904,7 @@ impl RouterServer {
                 // Codex 令牌；backend-api 专属头一律剥掉。
                 let auth_client = self
                     .http_clients
-                    .client(crate::official_accounts::SIWC_TOKEN_URL, None)
+                    .client(crate::official_accounts::SIWC_TOKEN_URL)
                     .await
                     .map_err(|message| (502, "proxy_unavailable", message))?;
                 let siwc_auth = resolve_siwc_upstream_auth(
@@ -913,8 +912,6 @@ impl RouterServer {
                     account_id,
                     &self.siwc_auth_cache,
                     &auth_client.client,
-                    &self.http_clients.proxied,
-                    None,
                 )
                 .await
                 .map_err(|error| {

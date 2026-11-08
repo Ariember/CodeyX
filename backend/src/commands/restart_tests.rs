@@ -1332,35 +1332,3 @@ fn conversation_git_toggle_requires_restart_but_model_change_is_live() {
         &current
     ));
 }
-
-#[test]
-fn codex_launch_proxy_change_requires_restart() {
-    let applied = CodeyConfig::default();
-    let mut current = applied.clone();
-    current.codex_launch_proxy = "http://127.0.0.1:7890".into();
-    assert!(config_requires_restart_with_route_status(
-        false,
-        &applied,
-        &RuntimeModelConfig::from_config(&applied),
-        &RuntimeSubagentConfig::from_config(&applied),
-        &current
-    ));
-}
-
-#[test]
-fn legacy_proxy_pool_metadata_does_not_require_restart() {
-    let applied = CodeyConfig::default();
-    let mut current = applied.clone();
-    current.network_proxy = Some(serde_json::json!({
-        "processProxy": {"kind":"node","id":"exit"},
-        "processCapture": true,
-        "nodes": [{"id":"exit","enabled":false}]
-    }));
-    assert!(!config_requires_restart_with_route_status(
-        false,
-        &applied,
-        &RuntimeModelConfig::from_config(&applied),
-        &RuntimeSubagentConfig::from_config(&applied),
-        &current
-    ));
-}

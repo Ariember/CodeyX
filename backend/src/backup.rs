@@ -197,7 +197,6 @@ impl Backup {
             .extend(previous.model_alias_history.clone());
         next.codex_app_path.clone_from(&previous.codex_app_path);
         next.user_scripts.clone_from(&previous.user_scripts);
-        next.network_proxy.clone_from(&previous.network_proxy);
         next.official_account_available_this_launch =
             previous.official_account_available_this_launch;
         next.official_account_status_this_launch = previous.official_account_status_this_launch;

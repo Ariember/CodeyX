@@ -110,7 +110,6 @@ function modelSectionProps(overrides = {}) {
           supportsRemoteCompaction: false,
           supportsWebsockets: false,
           upstreamProtocol: "openaiResponses",
-          upstreamProxy: "",
         },
       ],
       promptOptimization: {},

@@ -194,9 +194,9 @@ test("official accounts derive missing route settings and keep explicit blank lo
 
 test("official settings allow an empty long name and reject an empty short name", () => {
   const { exports } = createModuleGraph(new URL("../src/officialRouteSettings.ts", import.meta.url));
-  const draft = { routeName: "", routeShortName: "主", baseUrl: "", upstreamProxy: "" };
+  const draft = { routeName: "", routeShortName: "主", baseUrl: "" };
   assert.deepEqual(exports.validateOfficialRouteSettings(draft, [], [], "account"), {
-    routeName: "", shortName: "", baseUrl: "", upstreamProxy: "",
+    routeName: "", shortName: "", baseUrl: "",
   });
   assert.equal(exports.validateOfficialRouteSettings({ ...draft, routeShortName: " " }, [], [], "account").shortName, "请输入短名称");
 });
@@ -252,13 +252,13 @@ test("preview saving blank official long names survives derivation and missing s
     );
     const invoke = previewWindow.__codeyInvokeApi;
     const saved = await invoke("save_official_account_route_settings", {
-      accountId: "acct_preview_1", routeName: " ", routeShortName: "主官", baseUrl: "", upstreamProxy: "",
+      accountId: "acct_preview_1", routeName: " ", routeShortName: "主官", baseUrl: "",
     });
     assert.equal(saved.status, "ok");
     assert.equal(saved.accounts.find((account) => account.id === "acct_preview_1").routeName, "");
     assert.equal(saved.config.profiles.find((profile) => profile.officialAccountId === "acct_preview_1").name, "");
     const rejected = await invoke("save_official_account_route_settings", {
-      accountId: "acct_preview_1", routeName: "不应保存", routeShortName: " ", baseUrl: "", upstreamProxy: "",
+      accountId: "acct_preview_1", routeName: "不应保存", routeShortName: " ", baseUrl: "",
     });
     assert.equal(rejected.status, "failed");
     assert.equal(rejected.message, "请输入短名称");

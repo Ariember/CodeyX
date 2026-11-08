@@ -32,7 +32,7 @@ export function createBackupPreview(read: () => ConfigSaveResult, write: (config
           if (args.settingsRevision !== previous.settingsRevision) throw new Error("配置已被其他操作更新，请重新预览备份后再恢复");
           const { config } = parse(args.content);
           write({ ...config, settingsRevision: previous.settingsRevision + 1, codexAppPath: previous.codexAppPath,
-            userScripts: previous.userScripts, networkProxy: previous.networkProxy });
+            userScripts: previous.userScripts });
           return { ...read(), recoveryPath: "预览/before-restore.json", restartRequired: true };
         }
         case "webdav_upload": cloud = exportConfig(); return { status: "ok" };

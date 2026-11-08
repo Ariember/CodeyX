@@ -1,21 +1,3 @@
-/** Validates optional per-route outbound proxy URLs before they are saved. */
-export function validateOutboundProxyUrl(value: string, label = "上游代理") {
-  const normalized = value.trim();
-  if (!normalized) return "";
-  try {
-    const parsed = new URL(normalized);
-    if (
-      !["http:", "https:", "socks5:", "socks5h:"].includes(parsed.protocol) ||
-      !parsed.hostname
-    ) {
-      return `${label}必须是 http、https、socks5 或 socks5h 地址`;
-    }
-    return "";
-  } catch {
-    return `${label}格式无效`;
-  }
-}
-
 /** Optional gateway address. Blank keeps the caller's default endpoint. */
 export function validateOptionalOutboundApiUrl(value: string, label = "网关地址") {
   const normalized = value.trim();

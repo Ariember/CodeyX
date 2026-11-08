@@ -3504,67 +3504,6 @@ async fn chat_route_retries_reasoning_content_missing_with_the_saved_summary() {
 }
 
 #[tokio::test]
-async fn deepseek_chat_route_sends_the_reasoning_summary_on_the_first_attempt() {
-    let proxy = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let proxy_address = proxy.local_addr().unwrap();
-    let proxy_task = tokio::spawn(async move {
-        let (mut stream, _) = proxy.accept().await.unwrap();
-        let request = read_http_request(&mut stream).await.unwrap();
-        let body = serde_json::from_slice::<Value>(&request.body).unwrap();
-        write_json_response(
-            &mut stream,
-            200,
-            &json!({
-                "id": "chatcmpl-deepseek",
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "ok"},
-                    "finish_reason": "stop"
-                }]
-            }),
-        )
-        .await
-        .unwrap();
-        (request.path, body)
-    });
-    let (mut config, provider_id, model) = router_config("http://api.deepseek.com/v1".into());
-    config.profiles[0].upstream_protocol =
-        crate::config::UPSTREAM_PROTOCOL_OPENAI_CHAT_COMPLETIONS.into();
-    config.profiles[0].upstream_proxy = format!("http://{proxy_address}");
-    config.profiles[0].normalize();
-    let router = LocalRouter::start(&config).await.unwrap();
-    let endpoint = router.endpoint();
-    let response = reqwest::Client::new()
-        .post(format!("{}/responses", endpoint.base_url))
-        .bearer_auth(&endpoint.token)
-        .json(&json!({
-            "model": model_alias(&provider_id, &model),
-            "input":[
-                {
-                    "type": "reasoning",
-                    "summary": [{"type": "summary_text", "text": "先看文件"}],
-                    "content": []
-                },
-                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "已完成"}]},
-                {"role": "user", "content": "继续"}
-            ],
-            "store": false,
-            "stream": false,
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let (path, body) = proxy_task.await.unwrap();
-    assert_eq!(path, "http://api.deepseek.com/v1/chat/completions");
-    assert_eq!(body["messages"][0]["reasoning_content"], "先看文件");
-    assert_eq!(body["messages"][0]["content"], "已完成");
-    assert!(body["messages"][1].get("reasoning_content").is_none());
-    router.stop().await.unwrap();
-}
-
-#[tokio::test]
 async fn stopping_router_aborts_connections_that_outlive_the_drain_deadline() {
     let router = LocalRouter::start(&CodeyConfig::default()).await.unwrap();
     let endpoint = router.endpoint();
@@ -11603,11 +11542,11 @@ async fn routing_hint_reaches_upstream_with_the_restored_model_name() {
 }
 
 #[tokio::test]
-async fn route_upstream_proxy_carries_requests_through_the_proxy() {
-    let proxy = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let proxy_address = proxy.local_addr().unwrap();
-    let proxy_task = tokio::spawn(async move {
-        let (mut stream, _) = proxy.accept().await.unwrap();
+async fn legacy_route_proxy_does_not_change_requests_or_websockets() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let upstream_address = upstream.local_addr().unwrap();
+    let upstream_task = tokio::spawn(async move {
+        let (mut stream, _) = upstream.accept().await.unwrap();
         let request = read_http_request(&mut stream).await.unwrap();
         let body = serde_json::from_slice::<Value>(&request.body).unwrap();
         write_json_response(
@@ -11619,10 +11558,11 @@ async fn route_upstream_proxy_carries_requests_through_the_proxy() {
         .unwrap();
         request.path
     });
-    // 上游域名不可解析：请求只有经过代理（绝对形式请求行）才能成功。
-    let (mut config, provider_id, model) =
-        router_config("http://codey-proxy-test.invalid/v1".into());
-    config.profiles[0].upstream_proxy = format!("http://{proxy_address}");
+    let (mut config, provider_id, model) = router_config(format!("http://{upstream_address}/v1"));
+    config.profiles[0].supports_websockets = true;
+    let mut saved = serde_json::to_value(&config).unwrap();
+    saved["profiles"][0]["upstreamProxy"] = json!("http://127.0.0.1:1");
+    let config: CodeyConfig = serde_json::from_value(saved).unwrap();
     let router = LocalRouter::start(&config).await.unwrap();
     let endpoint = router.endpoint();
 
@@ -11636,18 +11576,7 @@ async fn route_upstream_proxy_carries_requests_through_the_proxy() {
 
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     assert_eq!(response.json::<Value>().await.unwrap()["model"], model);
-    let proxied_path = proxy_task.await.unwrap();
-    assert_eq!(proxied_path, "http://codey-proxy-test.invalid/v1/responses");
-    // 配置了上游代理的线路不使用上游 WebSocket，即使线路声明支持。
-    config.profiles[0].supports_websockets = true;
-    let snapshot = RouterSnapshot::from_config(&config);
-    assert!(
-        snapshot
-            .routes
-            .values()
-            .all(|route| !route.supports_websockets)
-    );
-    config.profiles[0].upstream_proxy = String::new();
+    assert_eq!(upstream_task.await.unwrap(), "/v1/responses");
     let snapshot = RouterSnapshot::from_config(&config);
     assert!(
         snapshot

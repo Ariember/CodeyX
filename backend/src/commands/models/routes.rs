@@ -346,21 +346,7 @@ pub(crate) async fn fetch_official_route_models(
     } else {
         official_models_endpoint(base_url, client_version.as_deref())
     };
-    let proxy = state.proxy_for_profile(profile).await?;
-    let client = if let Some(proxy_url) = proxy.as_deref() {
-        reqwest::Client::builder()
-            .no_proxy()
-            .user_agent(format!("Codey/{}", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .proxy(
-                reqwest::Proxy::all(proxy_url)
-                    .map_err(|_| "官方线路的上游代理地址无效".to_string())?,
-            )
-            .build()
-            .map_err(|_| "创建官方模型请求客户端失败".to_string())?
-    } else {
-        state.http_client.current(&endpoint).await
-    };
+    let client = state.http_client.current(&endpoint).await;
     let mut request = client
         .get(endpoint)
         .timeout(std::time::Duration::from_secs(20))
@@ -519,7 +505,7 @@ pub async fn fetch_route_models(
             })
             .collect::<Vec<_>>()
     } else {
-        super::sync::fetch_provider_models_with_state(state, profile.clone())
+        super::sync::fetch_provider_models(profile.clone())
             .await
             .map_err(|error| error.to_string())?
     };
@@ -663,28 +649,6 @@ pub(crate) fn config_with_provider_model_sync(
 mod tests {
     use super::{official_models_account_id, official_models_base_url, official_models_endpoint};
     use crate::config::{AUTH_MODE_OFFICIAL_ACCOUNT, ProviderProfile, official_profile_id};
-
-    #[test]
-    fn deleting_route_preserves_retired_proxy_settings() {
-        let mut config = crate::config::CodeyConfig {
-            profiles: ["first", "second"]
-                .map(|id| {
-                    let mut profile = ProviderProfile::new(id);
-                    profile.id = id.into();
-                    profile.base_url = "https://fixture.invalid/v1".into();
-                    profile.api_key = "fixture-key".into();
-                    profile
-                })
-                .into(),
-            ..Default::default()
-        };
-        config.network_proxy = Some(serde_json::json!({
-            "upstreamByProfile": {"first": {"kind":"node", "id":"retired"}},
-            "unknownLegacyField": true,
-        }));
-        let next = super::config_after_route_deletion(&config, "first").unwrap();
-        assert_eq!(next.network_proxy, config.network_proxy);
-    }
 
     #[test]
     fn official_models_account_id_uses_the_field_then_the_profile_id() {

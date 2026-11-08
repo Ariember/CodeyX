@@ -279,20 +279,6 @@ test("加载提示区分启动失败、配置损坏、待重启和就绪，空�
   assert.match(state.configLoadNotice(loadResult(), { running: false }).text, /已就绪/);
 });
 
-test("启动代理警告优先于普通成功和重启提示，实际错误仍优先", () => {
-  const startupWarning = "代理未应用，已继续启动";
-  for (const status of [{ running: true }, { running: true, restartRequired: true },
-    { running: true, configApply: { settingsRevision: 1, phase: "applied" } }]) {
-    assert.deepEqual(state.configLoadNotice(loadResult(), { ...status, startupWarning }), { tone: "info", text: startupWarning });
-  }
-  assert.deepEqual(state.configLoadNotice(loadResult(), { running: false, startupError: "启动失败", startupWarning }),
-    { tone: "error", text: "自动启动失败：启动失败" });
-  assert.deepEqual(state.configLoadNotice(loadResult(), { running: true, startupWarning,
-    configApply: { settingsRevision: 1, phase: "failed", applyError: "设置应用失败" } }),
-  { tone: "error", text: "CodeyX 设置已保存；设置应用失败" });
-  assert.equal(state.configLoadNotice(loadResult(), { running: true, startupWarning: null }), null);
-});
-
 test("保存提示保留热更新、生效失败、被新设置取代和重启语义", () => {
   const cases = [
     [{}, false, "success", "CodeyX 设置已保存"],

@@ -3,7 +3,6 @@ use super::*;
 #[derive(Default)]
 pub(super) struct UpstreamHttpClients {
     state: Mutex<ClientState>,
-    pub(super) proxied: Mutex<HashMap<String, reqwest::Client>>,
 }
 
 #[derive(Default)]
@@ -36,18 +35,16 @@ impl UpstreamHttpClients {
     pub(super) async fn client(
         self: &Arc<Self>,
         url: &str,
-        proxy: Option<&str>,
     ) -> std::result::Result<HttpClientLease, String> {
         let clients = Arc::clone(self);
         let url = url.to_string();
-        let proxy = proxy.map(str::to_string);
         // 系统代理和证书读取都可能阻塞；仅配置变化或失效后重建连接池。
         tokio::task::spawn_blocking(move || {
             #[cfg(not(test))]
             let matcher = SystemProxyMatcher::from_system();
             #[cfg(test)]
             let matcher = SystemProxyMatcher::builder().build();
-            clients.client_with_matcher(&url, proxy.as_deref(), Arc::new(matcher))
+            clients.client_with_matcher(&url, Arc::new(matcher))
         })
         .await
         .map_err(|_| "刷新上游网络客户端任务异常退出".to_string())?
@@ -56,41 +53,12 @@ impl UpstreamHttpClients {
     fn client_with_matcher(
         &self,
         url: &str,
-        proxy: Option<&str>,
         matcher: Arc<SystemProxyMatcher>,
     ) -> std::result::Result<HttpClientLease, String> {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(proxy) = proxy {
-            let mut proxied = self
-                .proxied
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let client = match proxied.get(proxy) {
-                Some(client) => client.clone(),
-                None => {
-                    let proxy_target = reqwest::Proxy::all(proxy)
-                        .map_err(|_| "线路的上游代理地址无效，请检查线路设置".to_string())?;
-                    let client = upstream_http_client_builder()
-                        .no_proxy()
-                        .proxy(proxy_target)
-                        .build()
-                        .map_err(|_| "无法创建上游代理客户端，请检查代理地址".to_string())?;
-                    if proxied.len() >= 8 {
-                        proxied.clear();
-                    }
-                    proxied.insert(proxy.to_string(), client.clone());
-                    client
-                }
-            };
-            return Ok(HttpClientLease {
-                client,
-                generation: state.generation,
-                system_proxy_applies: false,
-            });
-        }
         let uri = url
             .parse::<WebSocketUri>()
             .map_err(|_| "线路的上游地址无效".to_string())?;
@@ -109,10 +77,6 @@ impl UpstreamHttpClients {
                 .map_err(|_| "无法创建上游网络客户端".to_string())?;
             if changed {
                 state.generation = state.generation.wrapping_add(1);
-                self.proxied
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clear();
             }
             state.system = Some((Arc::clone(&matcher), client));
         }
@@ -139,10 +103,6 @@ impl UpstreamHttpClients {
         }
         state.generation = state.generation.wrapping_add(1);
         state.system = None;
-        self.proxied
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
     }
 }
 
@@ -269,17 +229,13 @@ mod tests {
             (Some(second_proxy.url.as_str()), "second proxy"),
             (None, "origin"),
         ] {
-            let first = clients
-                .client_with_matcher(&url, None, matcher(proxy))
-                .unwrap();
+            let first = clients.client_with_matcher(&url, matcher(proxy)).unwrap();
             if let Some(previous) = previous_generation {
                 assert_ne!(first.generation, previous);
             }
             assert_eq!(first.system_proxy_applies, proxy.is_some());
             assert_eq!(post(&first, &url).await, expected);
-            let second = clients
-                .client_with_matcher(&url, None, matcher(proxy))
-                .unwrap();
+            let second = clients.client_with_matcher(&url, matcher(proxy)).unwrap();
             assert_eq!(first.generation, second.generation);
             assert_eq!(post(&second, &url).await, expected);
             previous_generation = Some(second.generation);
@@ -295,7 +251,7 @@ mod tests {
         let mut proxy = endpoint("proxy").await;
         let clients = UpstreamHttpClients::default();
         let first = clients
-            .client_with_matcher(&origin.url, None, matcher(Some(&proxy.url)))
+            .client_with_matcher(&origin.url, matcher(Some(&proxy.url)))
             .unwrap();
         assert_eq!(post(&first, &origin.url).await, "proxy");
         let bypass = Arc::new(
@@ -304,9 +260,7 @@ mod tests {
                 .no("127.0.0.1")
                 .build(),
         );
-        let direct = clients
-            .client_with_matcher(&origin.url, None, bypass)
-            .unwrap();
+        let direct = clients.client_with_matcher(&origin.url, bypass).unwrap();
         assert!(!direct.system_proxy_applies);
         assert_ne!(direct.generation, first.generation);
         assert_eq!(post(&direct, &origin.url).await, "origin");
@@ -317,7 +271,7 @@ mod tests {
             authenticated.set_username("test-user").unwrap();
             authenticated.set_password(Some(password)).unwrap();
             let lease = clients
-                .client_with_matcher(&origin.url, None, matcher(Some(authenticated.as_str())))
+                .client_with_matcher(&origin.url, matcher(Some(authenticated.as_str())))
                 .unwrap();
             assert_ne!(lease.generation, previous_generation);
             assert_eq!(post(&lease, &origin.url).await, "proxy");
@@ -338,23 +292,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalidation_replaces_explicit_proxy_pool_and_ignores_old_failures() {
+    async fn invalidation_replaces_system_proxy_pool_and_ignores_old_failures() {
         let proxy = endpoint("proxy").await;
         let clients = UpstreamHttpClients::default();
         let url = "http://unused.invalid/v1/responses";
         let first = clients
-            .client_with_matcher(url, Some(&proxy.url), matcher(None))
+            .client_with_matcher(url, matcher(Some(&proxy.url)))
             .unwrap();
         assert_eq!(post(&first, url).await, "proxy");
         clients.invalidate(first.generation);
         let fresh = clients
-            .client_with_matcher(url, Some(&proxy.url), matcher(None))
+            .client_with_matcher(url, matcher(Some(&proxy.url)))
             .unwrap();
         assert_ne!(fresh.generation, first.generation);
         assert_eq!(post(&fresh, url).await, "proxy");
         clients.invalidate(first.generation);
         let reused = clients
-            .client_with_matcher(url, Some(&proxy.url), matcher(None))
+            .client_with_matcher(url, matcher(Some(&proxy.url)))
             .unwrap();
         assert_eq!(fresh.generation, reused.generation);
         assert_eq!(post(&reused, url).await, "proxy");

@@ -508,15 +508,10 @@ fn https_origins_are_exact_and_configuration_secrets_are_redacted() {
         Some("https://example.com")
     );
     let value = redact_panel_config(
-        json!({"config":{"profiles":[{"apiKey":"secret","apiKeyConfigured":true,"modelRequestHeaders":{"Authorization":"secret"},"upstreamProxy":"http://secret:secret@proxy.example.com:8080"}],"networkProxy":{"password":"secret"},"promptOptimization":{"apiKey":"secret"},"webhook":{"channels":[{"botToken":"secret","url":"secret"}]}},"accounts":[{"id":"saved","upstreamProxy":"socks5://secret:secret@proxy.example.com:1080"},null]}),
+        json!({"config":{"profiles":[{"apiKey":"secret","apiKeyConfigured":true,"modelRequestHeaders":{"Authorization":"secret"}}],"promptOptimization":{"apiKey":"secret"},"webhook":{"channels":[{"botToken":"secret","url":"secret"}]}},"accounts":[{"id":"saved"},null]}),
     );
     assert!(!value.to_string().contains("secret"));
     assert_eq!(value["config"]["profiles"][0]["apiKeyConfigured"], true);
-    assert!(value["config"].get("networkProxy").is_none());
-    assert_eq!(
-        value["accounts"][0]["upstreamProxy"],
-        "socks5://redacted:redacted@proxy.example.com:1080"
-    );
     assert!(panel_command("save_codey_config"));
     assert!(!panel_command("remote_control_status"));
     assert!(!panel_command("config_backup"));
@@ -562,126 +557,6 @@ fn saving_remote_forms_preserves_hidden_headers_and_supports_replacement() {
         assert_eq!(
             restore_panel_headers(&config, "save_codey_config", malformed.clone()),
             malformed
-        );
-    }
-}
-
-#[test]
-fn remote_proxy_redaction_preserves_host_values_and_explicit_edits() {
-    let mut config = crate::config::CodeyConfig::default();
-    let profile = &mut config.profiles[0];
-    profile.upstream_proxy = "http://private-user:private-pass@proxy.example.com:8080".into();
-    config.network_proxy = Some(json!({"nodes":[{"password":"legacy-private"}]}));
-    let hidden = redact_panel_config(json!({"config":config}));
-    assert!(!hidden.to_string().contains("private"));
-    let restored = restore_panel_headers(&config, "save_codey_config", hidden);
-    assert_eq!(
-        restored["config"]["profiles"][0]["upstreamProxy"],
-        config.profiles[0].upstream_proxy
-    );
-    assert_eq!(
-        restored["config"]["networkProxy"],
-        config.network_proxy.clone().unwrap()
-    );
-    for proxy in [
-        json!(""),
-        json!(null),
-        json!("https://new-user:new-pass@new.example.com:8443"),
-    ] {
-        let mut input = json!({"config":config});
-        input["config"]["profiles"][0]["upstreamProxy"] = proxy.clone();
-        assert_eq!(
-            restore_panel_headers(&config, "save_codey_config", input)["config"]["profiles"][0]["upstreamProxy"],
-            proxy
-        );
-    }
-    for proxy in [
-        "",
-        "http://proxy.example.com:8080",
-        "socks5h://proxy.example.com:1080",
-    ] {
-        assert_eq!(redacted_proxy_url(proxy), proxy);
-    }
-    for proxy in [
-        "http://private-user@proxy.example.com:8080",
-        "http://:private-pass@proxy.example.com:8080",
-        "socks5h://private-user:private-pass@proxy.example.com:1080",
-        "private-user:private-pass@proxy.example.com:8080",
-        "http://private-user:private-pass@[bad-host",
-    ] {
-        let redacted = redacted_proxy_url(proxy);
-        assert!(!redacted.contains("private"));
-        let mut submitted = json!(redacted);
-        restore_panel_proxy(&mut submitted, proxy);
-        assert_eq!(submitted, proxy);
-    }
-    for malformed in [
-        json!({}),
-        json!({"upstreamProxy":null}),
-        json!({"upstreamProxy":1}),
-    ] {
-        let result = redact_panel_config(json!({"accounts":[malformed.clone()]}));
-        assert_eq!(result["accounts"][0], malformed);
-    }
-}
-
-#[tokio::test]
-async fn remote_official_proxy_forms_restore_the_saved_account_even_without_an_active_route() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = crate::official_accounts::OfficialAccountStore::new(directory.path());
-    let mut record = crate::official_accounts::OfficialAccountRecord::from_auth(
-        json!({"tokens":{"access_token":"test-token","account_id":"saved-account"}}),
-        1,
-    )
-    .unwrap();
-    record.upstream_proxy = Some("http://private-user:private-pass@proxy.example.com:8080".into());
-    store.upsert(&record).unwrap();
-    let mut config = crate::config::CodeyConfig::default();
-    config.profiles.clear();
-    let hidden = redact_panel_config(json!({"accounts":[record.summary(None)]}));
-    let proxy = hidden["accounts"][0]["upstreamProxy"].clone();
-    for command in [
-        "save_official_account_route_settings",
-        "save_official_route_models",
-    ] {
-        let restored = restore_panel_account_proxy(
-            &config,
-            store.clone(),
-            command,
-            json!({"accountId":record.id,"upstreamProxy":proxy}),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            restored["upstreamProxy"],
-            record.upstream_proxy.as_deref().unwrap()
-        );
-        for replacement in [json!(""), json!(null), json!("http://new.example.com:8080")] {
-            let input = json!({"accountId":record.id,"upstreamProxy":replacement});
-            assert_eq!(
-                restore_panel_account_proxy(&config, store.clone(), command, input.clone())
-                    .await
-                    .unwrap(),
-                input
-            );
-        }
-    }
-    let mut profile = crate::config::ProviderProfile::new("official");
-    profile.official_account_id = Some(record.id.clone());
-    let route_id = profile.id.clone();
-    config.profiles.push(profile);
-    for route_id in [route_id.clone(), format!(" {route_id} ")] {
-        let restored = restore_panel_account_proxy(
-            &config,
-            store.clone(),
-            "save_official_route_models",
-            json!({"routeId":route_id,"upstreamProxy":proxy}),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            restored["upstreamProxy"],
-            record.upstream_proxy.as_deref().unwrap()
         );
     }
 }

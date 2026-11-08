@@ -28,7 +28,6 @@ export type RouteEditorActions = {
     showAccountUsageInHeader: boolean,
     enabled: boolean,
     modelContexts: Record<string, ModelContextConfig> | undefined,
-    upstreamProxy?: string,
     routeSettings?: { accountId: string; routeName: string; routeShortName: string; baseUrl: string },
   ) => Promise<boolean>;
 };

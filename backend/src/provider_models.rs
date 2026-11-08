@@ -69,37 +69,11 @@ pub(crate) fn http_client() -> &'static SystemProxyClient {
     })
 }
 
-#[cfg(test)]
-pub async fn fetch(profile: &ProviderProfile, client: &Client) -> Result<Vec<String>> {
-    fetch_with_proxy(profile, client, None).await
-}
-
-pub(crate) async fn fetch_with_proxy(
-    profile: &ProviderProfile,
-    client: &Client,
-    proxy_override: Option<&str>,
-) -> Result<Vec<String>> {
+pub(crate) async fn fetch(profile: &ProviderProfile, client: &Client) -> Result<Vec<String>> {
     let base = profile.normalized_base_url();
     if base.is_empty() {
         anyhow::bail!("API 地址不能为空");
     }
-    // 配置了上游代理的线路，模型同步也走同一出口，保持该线路流量的网络路径一致。
-    let proxied_client;
-    let proxy_url = proxy_override.unwrap_or(profile.upstream_proxy.trim());
-    let client = if proxy_url.is_empty() {
-        client
-    } else {
-        let proxy =
-            reqwest::Proxy::all(proxy_url).map_err(|_| anyhow::anyhow!("线路上游代理地址无效"))?;
-        proxied_client = Client::builder()
-            .no_proxy()
-            .connect_timeout(Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::none())
-            .proxy(proxy)
-            .build()
-            .context("创建线路代理客户端失败")?;
-        &proxied_client
-    };
     let protocol =
         UpstreamProtocol::from_profile(profile.official_account, &profile.upstream_protocol);
     let endpoints = if protocol == UpstreamProtocol::Gemini {

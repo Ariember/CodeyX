@@ -58,10 +58,6 @@ const REFRESH_BEFORE_ACTIVATE_AGE: Duration = Duration::from_secs(6 * 60 * 60);
 /// Access tokens that expire within this margin are refreshed before use, so a
 /// request never starts on a token that is about to lapse.
 const TOKEN_REFRESH_MARGIN_SECONDS: u64 = 5 * 60;
-/// Same bound as the local router's proxied upstream clients: a handful of
-/// account proxies keep their TLS pools warm; a rare flood of new addresses
-/// just drops the older pools.
-const MAX_OFFICIAL_PROXY_CLIENTS: usize = 8;
 /// 手动粘贴的 Refresh Token 或 OAuth JSON 上限。正常登录文档远小于此值。
 const MAX_MANUAL_CREDENTIAL_BYTES: usize = 64 * 1024;
 const MIN_REFRESH_TOKEN_CHARS: usize = 20;
@@ -155,8 +151,6 @@ pub struct OfficialAccountRecord {
     pub route_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_short_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub upstream_proxy: Option<String>,
     /// Custom OpenAI gateway for this account. `None` keeps the official
     /// Codex endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,8 +188,6 @@ pub struct OfficialAccountSummary {
     pub route_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route_short_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_proxy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     /// 卡片据此把失效账号标红，并隐藏切换到该账号的入口。
@@ -274,7 +266,6 @@ impl OfficialAccountRecord {
             // `OfficialAccountStore::upsert` keeps the saved route settings.
             route_name: None,
             route_short_name: None,
-            upstream_proxy: None,
             base_url: None,
             invalid_reason: None,
             invalid_since: None,
@@ -317,7 +308,6 @@ impl OfficialAccountRecord {
             last_refresh: self.last_refresh(),
             route_name: self.route_name.clone(),
             route_short_name: self.route_short_name.clone(),
-            upstream_proxy: self.upstream_proxy.clone(),
             base_url: self.base_url.clone(),
             invalid: self.invalid(),
             invalid_reason: self.invalid_reason.clone(),
@@ -793,7 +783,6 @@ impl OfficialAccountStore {
         if let Some(saved) = self.get(&record.id)? {
             record.route_name = saved.route_name;
             record.route_short_name = saved.route_short_name;
-            record.upstream_proxy = saved.upstream_proxy;
             record.base_url = saved.base_url;
             // 重新登录只替换 Codex 凭据，SIWC 槽位按账号保留。
             record.siwc = saved.siwc;
@@ -851,7 +840,6 @@ impl OfficialAccountStore {
         id: &str,
         route_name: Option<String>,
         route_short_name: Option<String>,
-        upstream_proxy: Option<String>,
         base_url: Option<String>,
     ) -> Result<()> {
         let _guard = self.lock_writes()?;
@@ -860,7 +848,6 @@ impl OfficialAccountStore {
             .ok_or_else(|| anyhow!("找不到官方账号：{id}"))?;
         record.route_name = route_name.map(|name| name.trim().to_string());
         record.route_short_name = route_setting(route_short_name);
-        record.upstream_proxy = route_setting(upstream_proxy);
         record.base_url = route_setting(base_url);
         self.write(&record)
     }
@@ -1217,7 +1204,6 @@ impl OfficialAccountStore {
             expires_at: credential.expires_at,
             earliest_refresh_at: credential.earliest_refresh_at,
             saved_at: credential.saved_at,
-            proxy_url: record.upstream_proxy.clone(),
             invalid_reason: credential.invalid_reason.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&file)?;
@@ -1267,9 +1253,6 @@ pub(crate) struct SiwcFileCredential {
     pub earliest_refresh_at: Option<u64>,
     #[serde(default)]
     pub saved_at: u64,
-    /// 账号线路设置的代理地址快照；SIWC 流量与 Codex 流量走同一出口。
-    #[serde(default)]
-    pub proxy_url: Option<String>,
     #[serde(default)]
     pub invalid_reason: Option<String>,
 }
@@ -1396,13 +1379,10 @@ fn needs_token_refresh(record: &OfficialAccountRecord) -> bool {
 
 /// Refreshes the account's tokens when the stored access token is expired,
 /// close to expiry, or old enough to matter. Errors are returned so callers can
-/// decide whether to fall back to the stored copy. Production callers pass the
-/// shared proxy-client cache so repeated refreshes reuse the TLS pool.
-pub async fn refresh_if_stale_cached(
+/// decide whether to fall back to the stored copy.
+pub async fn refresh_if_stale(
     client: &reqwest::Client,
     record: &mut OfficialAccountRecord,
-    upstream_proxy: Option<&str>,
-    proxied_clients: Option<&Mutex<HashMap<String, reqwest::Client>>>,
 ) -> Result<bool> {
     // 已确认失效的账号不再尝试刷新：官方每次都会拒绝，重复请求只会抬高
     // 风控概率；重新添加账号会写入新凭据并清除失效标记。
@@ -1415,8 +1395,7 @@ pub async fn refresh_if_stale_cached(
     let Some(refresh_token) = record.refresh_token().map(ToString::to_string) else {
         return Ok(false);
     };
-    let owned_client = official_http_client(client, proxied_clients, upstream_proxy)?;
-    let response = owned_client
+    let response = client
         .post(OAUTH_TOKEN_URL)
         .timeout(Duration::from_secs(20))
         .json(&refresh_token_grant(&refresh_token))
@@ -1437,52 +1416,6 @@ pub async fn refresh_if_stale_cached(
     // 刷新成功说明凭据重新可用，之前记录的失效状态随之清除。
     record.clear_invalid();
     Ok(true)
-}
-
-#[cfg(test)]
-pub async fn refresh_if_stale(
-    client: &reqwest::Client,
-    record: &mut OfficialAccountRecord,
-    upstream_proxy: Option<&str>,
-) -> Result<bool> {
-    refresh_if_stale_cached(client, record, upstream_proxy, None).await
-}
-
-pub(crate) fn official_http_client(
-    default_client: &reqwest::Client,
-    proxied_clients: Option<&Mutex<HashMap<String, reqwest::Client>>>,
-    upstream_proxy: Option<&str>,
-) -> Result<reqwest::Client> {
-    let Some(proxy) = upstream_proxy
-        .map(str::trim)
-        .filter(|proxy| !proxy.is_empty())
-    else {
-        return Ok(default_client.clone());
-    };
-    if let Some(cache) = proxied_clients {
-        let mut clients = cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(client) = clients.get(proxy) {
-            return Ok(client.clone());
-        }
-        let client = build_official_proxy_client(proxy)?;
-        if clients.len() >= MAX_OFFICIAL_PROXY_CLIENTS {
-            clients.clear();
-        }
-        clients.insert(proxy.to_string(), client.clone());
-        return Ok(client);
-    }
-    build_official_proxy_client(proxy)
-}
-
-fn build_official_proxy_client(proxy: &str) -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none())
-        .proxy(reqwest::Proxy::all(proxy).context("官方账号上游代理无效")?)
-        .build()?)
 }
 
 fn apply_token_response(record: &mut OfficialAccountRecord, payload: &Value) -> Result<()> {
@@ -2699,12 +2632,10 @@ fn siwc_refresh_lock(account_id: &str) -> Arc<tokio::sync::Mutex<()>> {
 
 /// SIWC 凭据临期时刷新；账号移除、凭据缺失或仍有效时返回 Ok(false)。
 /// 刷新失败只影响 SIWC 槽位，Codex 凭据不受牵连。
-pub(crate) async fn refresh_siwc_if_stale_with_proxy(
+pub(crate) async fn refresh_siwc_if_stale(
     client: &reqwest::Client,
     store: &OfficialAccountStore,
     account_id: &str,
-    proxied_clients: Option<&Mutex<HashMap<String, reqwest::Client>>>,
-    proxy_override: Option<&str>,
 ) -> Result<bool> {
     let lock = siwc_refresh_lock(account_id);
     let _guard = lock.lock().await;
@@ -2737,12 +2668,7 @@ pub(crate) async fn refresh_siwc_if_stale_with_proxy(
             detail: None,
         }));
     }
-    let request_client = official_http_client(
-        client,
-        proxied_clients,
-        proxy_override.or(record.upstream_proxy.as_deref()),
-    )?;
-    let response = request_client
+    let response = client
         .post(SIWC_TOKEN_URL)
         .timeout(Duration::from_secs(20))
         // 不带 scope：保留首次授权得到的全部授权范围。
@@ -3187,7 +3113,6 @@ mod tests {
                 &original.id,
                 Some("new route".into()),
                 None,
-                Some("http://127.0.0.1:1234".into()),
                 Some("https://gateway.example/backend-api/codex".into()),
             )
             .unwrap();
@@ -3196,10 +3121,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(committed.route_name.as_deref(), Some("new route"));
-        assert_eq!(
-            committed.upstream_proxy.as_deref(),
-            Some("http://127.0.0.1:1234")
-        );
         assert_eq!(
             committed.base_url.as_deref(),
             Some("https://gateway.example/backend-api/codex")
@@ -3248,66 +3169,29 @@ mod tests {
         .unwrap();
         record.mark_invalid("revoked");
         let original = record.auth.clone();
-        let refreshed = refresh_if_stale(&client, &mut record, Some("invalid proxy URL"))
-            .await
-            .unwrap();
+        let refreshed = refresh_if_stale(&client, &mut record).await.unwrap();
         assert!(!refreshed);
         assert!(record.invalid());
         assert_eq!(record.auth, original);
     }
 
-    #[tokio::test]
-    async fn token_refresh_uses_account_proxy_without_falling_back_to_direct() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut bytes = vec![0; 4096];
-            let count = stream.read(&mut bytes).await.unwrap();
-            stream
-                .write_all(
-                    b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                )
-                .await
-                .unwrap();
-            String::from_utf8_lossy(&bytes[..count]).to_string()
-        });
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let mut record = OfficialAccountRecord::from_auth(
+    #[test]
+    fn legacy_account_proxy_is_ignored() {
+        let original = OfficialAccountRecord::from_auth(
             chatgpt_auth("acct", "a@example.com", "2026-01-01T00:00:00Z"),
             1,
         )
         .unwrap();
-        let original = record.auth.clone();
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            refresh_if_stale(&client, &mut record, Some(&format!("http://{address}"))),
-        )
-        .await
-        .unwrap();
-        assert!(result.is_err());
-        let request = tokio::time::timeout(Duration::from_secs(5), server)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(request.starts_with("CONNECT auth.openai.com:443 "));
-        assert_eq!(record.auth, original);
-    }
-
-    #[test]
-    fn official_proxy_clients_are_reused_for_the_same_proxy() {
-        let cache = Mutex::new(HashMap::new());
-        let default_client = reqwest::Client::builder().no_proxy().build().unwrap();
-        official_http_client(&default_client, Some(&cache), Some("http://127.0.0.1:9")).unwrap();
-        official_http_client(&default_client, Some(&cache), Some("http://127.0.0.1:9")).unwrap();
-        official_http_client(&default_client, Some(&cache), Some("http://127.0.0.1:10")).unwrap();
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["upstreamProxy"] = json!("invalid proxy URL");
+        let restored: OfficialAccountRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(restored, original);
         assert!(
-            official_http_client(&default_client, Some(&cache), Some("not a proxy url")).is_err()
+            serde_json::to_value(restored)
+                .unwrap()
+                .get("upstreamProxy")
+                .is_none()
         );
-        let cached = cache.lock().unwrap();
-        assert_eq!(cached.len(), 2);
-        assert!(cached.contains_key("http://127.0.0.1:9"));
-        assert!(cached.contains_key("http://127.0.0.1:10"));
     }
 
     fn unsigned_jwt(payload: Value) -> String {
@@ -3491,15 +3375,12 @@ mod tests {
                 "acct_1",
                 Some("  主力官方号  ".into()),
                 Some("主".into()),
-                // A blank value means "no override", not an empty proxy.
-                Some("   ".into()),
                 Some("  https://gateway.example/v1/  ".into()),
             )
             .unwrap();
         let saved = store.get("acct_1").unwrap().unwrap();
         assert_eq!(saved.route_name.as_deref(), Some("主力官方号"));
         assert_eq!(saved.route_short_name.as_deref(), Some("主"));
-        assert_eq!(saved.upstream_proxy, None);
         assert_eq!(
             saved.base_url.as_deref(),
             Some("https://gateway.example/v1/")
@@ -3527,7 +3408,7 @@ mod tests {
         );
 
         store
-            .update_route_settings("acct_1", None, None, None, None)
+            .update_route_settings("acct_1", None, None, None)
             .unwrap();
         let cleared = store.get("acct_1").unwrap().unwrap();
         assert_eq!(cleared.route_name, None);
@@ -3535,7 +3416,7 @@ mod tests {
         assert_eq!(cleared.base_url, None);
 
         let error = store
-            .update_route_settings("acct_missing", None, None, None, None)
+            .update_route_settings("acct_missing", None, None, None)
             .unwrap_err();
         assert!(error.to_string().contains("acct_missing"));
     }
@@ -3590,13 +3471,7 @@ mod tests {
         // 重复执行不会改写已经生成的名称，手动设置的名称也不会被覆盖。
         store.ensure_generated_route_settings().unwrap();
         store
-            .update_route_settings(
-                "acct_2",
-                Some("主力官方号".into()),
-                Some("主".into()),
-                None,
-                None,
-            )
+            .update_route_settings("acct_2", Some("主力官方号".into()), Some("主".into()), None)
             .unwrap();
         store.ensure_generated_route_settings().unwrap();
         let custom = store.get("acct_2").unwrap().unwrap();
@@ -3604,7 +3479,7 @@ mod tests {
         assert_eq!(custom.route_short_name.as_deref(), Some("主"));
 
         store
-            .update_route_settings("acct_2", Some("Plus".into()), None, None, None)
+            .update_route_settings("acct_2", Some("Plus".into()), None, None)
             .unwrap();
         store.ensure_generated_route_settings().unwrap();
         let cleared = store.get("acct_2").unwrap().unwrap();
@@ -3628,7 +3503,7 @@ mod tests {
         assert_eq!(untouched.route_short_name.as_deref(), Some("官2"));
 
         store
-            .update_route_settings("acct_3", Some("官方账号7".into()), None, None, None)
+            .update_route_settings("acct_3", Some("官方账号7".into()), None, None)
             .unwrap();
         store.ensure_generated_route_settings().unwrap();
         let paired = store.get("acct_3").unwrap().unwrap();

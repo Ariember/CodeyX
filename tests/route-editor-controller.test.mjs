@@ -109,15 +109,15 @@ test("请求头错误不写入，清空与删除语义保留，取消不改配�
   assert.equal(writes.length, 1);
 });
 
-test("官方连接编辑保留空名称及模型上下文，模型编辑省略代理和账号设置", async t => {
-  const profile = { ...route(), authMode: "officialAccount", officialAccountId: "account", sourceProviderId: "provider", upstreamProxy: "http://localhost:7890" };
+test("官方连接编辑保留空名称及模型上下文，模型编辑省略账号设置", async t => {
+  const profile = { ...route(), authMode: "officialAccount", officialAccountId: "account", sourceProviderId: "provider" };
   const { h, options, officialWrites, refreshes } = setup(t, { officialAccounts: [{ id: "account", routeName: "", routeShortName: "官", baseUrl: "" }] });
   options.config = { ...options.config, profiles: [profile], selectedModelsByProvider: { provider: ["BETA", "retired"] }, modelContextByProvider: { provider: { BETA: { contextWindowTokens: 128000 } } } };
   h.render(options).openRouteDialog(profile, "settings");
   assert.equal(h.render().officialRouteDraft.routeName, "");
-  h.render().updateOfficialRouteDraft({ upstreamProxy: "", routeShortName: " 官 " });
+  h.render().updateOfficialRouteDraft({ routeShortName: " 官 " });
   let save = h.render().saveRouteDraft();
-  assert.deepEqual(officialWrites[0].args, [profile.id, ["BETA", "retired"], true, true, undefined, "", { accountId: "account", routeName: "", routeShortName: "官", baseUrl: "" }]);
+  assert.deepEqual(officialWrites[0].args, [profile.id, ["BETA", "retired"], true, true, undefined, { accountId: "account", routeName: "", routeShortName: "官", baseUrl: "" }]);
   officialWrites[0].resolve(true); await save;
   assert.equal(refreshes.length, 1);
   assert.equal(h.render().routeDraft, null);
@@ -130,7 +130,7 @@ test("官方连接编辑保留空名称及模型上下文，模型编辑省略�
   h.render().updateOfficialModelContext("beta", { contextWindowTokens: 256000 });
   assert.deepEqual(h.render().officialModelContextDraft, { beta: { contextWindowTokens: 256000 } });
   save = h.render().saveRouteDraft();
-  assert.deepEqual(officialWrites[1].args, [profile.id, ["alpha"], true, true, { beta: { contextWindowTokens: 256000 } }, undefined, undefined]);
+  assert.deepEqual(officialWrites[1].args, [profile.id, ["alpha"], true, true, { beta: { contextWindowTokens: 256000 } }, undefined]);
   officialWrites[1].resolve(true); await save;
 });
 

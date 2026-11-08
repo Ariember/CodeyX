@@ -284,11 +284,10 @@ pub(crate) async fn query_shared_snapshot_at(
     caches: &Mutex<AccountUsageCaches>,
     auth_path: &Path,
     force_refresh: bool,
-    upstream_proxy: Option<&str>,
 ) -> Value {
     let cache = caches.lock().await.for_auth_path(auth_path);
     let mut cache = cache.lock().await;
-    query_snapshot_at(&mut cache, auth_path, force_refresh, upstream_proxy).await
+    query_snapshot_at(&mut cache, auth_path, force_refresh).await
 }
 
 /// Credential document of the account Codex itself is logged in as.
@@ -359,7 +358,6 @@ impl AccountUsageCache {
         &mut self,
         auth_path: &Path,
         force_refresh: bool,
-        upstream_proxy: Option<&str>,
     ) -> Result<AccountUsageSnapshot> {
         self.observe_auth_fingerprint(official_auth_fingerprint(auth_path));
         let generation = self.auth_generation;
@@ -373,9 +371,7 @@ impl AccountUsageCache {
         // reqwest snapshots the current system proxy when a client is built. Rebuild the
         // dedicated usage client for each network refresh so proxy changes do not require
         // restarting Codey. Cached results still avoid unnecessary requests and rebuilds.
-        // 官方线路配置了上游代理时，额度查询走同一出口，避免同一账号同时从
-        // 两个地区访问。
-        let result = match account_usage_http_client(upstream_proxy) {
+        let result = match account_usage_http_client() {
             Ok(client) => fetch_official_account_usage(&client, auth_path).await,
             Err(error) => Err(error),
         };
@@ -466,10 +462,9 @@ pub(crate) async fn query_snapshot(
     cache: &mut AccountUsageCache,
     home: &Path,
     force_refresh: bool,
-    upstream_proxy: Option<&str>,
 ) -> Value {
     let auth_path = home.join(CODEX_AUTH_FILE_NAME);
-    query_snapshot_at(cache, &auth_path, force_refresh, upstream_proxy).await
+    query_snapshot_at(cache, &auth_path, force_refresh).await
 }
 
 /// Reads one credential document's usage, keeping the snapshot, TTL and
@@ -478,12 +473,11 @@ pub(crate) async fn query_snapshot_at(
     cache: &mut AccountUsageCache,
     auth_path: &Path,
     force_refresh: bool,
-    upstream_proxy: Option<&str>,
 ) -> Value {
     let result = if force_refresh {
-        cache.fetch_at(auth_path, true, upstream_proxy).await
+        cache.fetch_at(auth_path, true).await
     } else {
-        cache.fetch_at(auth_path, false, upstream_proxy).await
+        cache.fetch_at(auth_path, false).await
     };
     let mut value = match result {
         Ok(snapshot) => {
@@ -522,17 +516,12 @@ pub(crate) async fn query_snapshot_at(
     value
 }
 
-fn account_usage_http_client(upstream_proxy: Option<&str>) -> Result<Client> {
-    let mut builder = Client::builder()
+fn account_usage_http_client() -> Result<Client> {
+    Client::builder()
         .user_agent(format!("Codey/{}", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(ACCOUNT_USAGE_CONNECT_TIMEOUT);
-    if let Some(proxy) = upstream_proxy
-        .map(str::trim)
-        .filter(|proxy| !proxy.is_empty())
-    {
-        builder = builder.proxy(reqwest::Proxy::all(proxy).context("官方线路的上游代理地址无效")?);
-    }
-    builder.build().context("创建官方额度网络客户端失败")
+        .connect_timeout(ACCOUNT_USAGE_CONNECT_TIMEOUT)
+        .build()
+        .context("创建官方额度网络客户端失败")
 }
 
 fn account_usage_failure_backoff(consecutive_failures: u32) -> Duration {
@@ -1106,16 +1095,16 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut cache = AccountUsageCache::default();
         cache.record_success(sample_snapshot(), Instant::now());
-        let cached = query_snapshot(&mut cache, directory.path(), false, None).await;
+        let cached = query_snapshot(&mut cache, directory.path(), false).await;
         assert_eq!(cached["status"], "ok");
         assert_eq!(cached["fetchedAt"], 1_700_000_000_u64);
         // No auth file: a forced refresh must fetch instead of returning the snapshot.
-        let failed = query_snapshot(&mut cache, directory.path(), true, None).await;
+        let failed = query_snapshot(&mut cache, directory.path(), true).await;
         assert_eq!(failed["status"], "error");
         assert!(failed["message"].as_str().unwrap().contains("官方登录信息"));
         assert_eq!(cache.consecutive_failures, 1);
         assert_eq!(
-            query_snapshot(&mut cache, directory.path(), true, None).await,
+            query_snapshot(&mut cache, directory.path(), true).await,
             failed
         );
         assert_eq!(cache.consecutive_failures, 1);
@@ -1712,13 +1701,13 @@ mod tests {
             .await
             .record_success(other, Instant::now());
 
-        let waiting = query_shared_snapshot_at(&shared, &first, false, None);
+        let waiting = query_shared_snapshot_at(&shared, &first, false);
         tokio::pin!(waiting);
         let result = tokio::time::timeout(Duration::from_secs(2), async {
             tokio::select! {
                 biased;
                 _ = &mut waiting => panic!("同一账号必须等待已有查询释放锁"),
-                result = query_shared_snapshot_at(&shared, &second, false, None) => result,
+                result = query_shared_snapshot_at(&shared, &second, false) => result,
             }
         })
         .await

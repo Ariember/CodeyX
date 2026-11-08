@@ -248,7 +248,6 @@ if (import.meta.env.DEV) {
       protectCrashpadPending: true,
       slimCodexPet: true,
       gpuLaunchMode: "off" as const,
-      codexLaunchProxy: "",
       fastContextTools: false,
       subagentOptimization: false,
       subagentModel: "gpt-5.6-terra",
@@ -312,7 +311,6 @@ if (import.meta.env.DEV) {
           supportsWebsockets: true,
           supportsNativeWebSearch: true,
           supportsAutoReview: true,
-          upstreamProxy: account.upstreamProxy ?? "",
         };
       });
       previewConfig = {
@@ -952,7 +950,6 @@ if (import.meta.env.DEV) {
           routeName: String(args.routeName ?? ""),
           routeShortName: String(args.routeShortName ?? ""),
           baseUrl: String(args.baseUrl ?? ""),
-          upstreamProxy: String(args.upstreamProxy ?? ""),
         }, previewConfig.profiles, previewOfficialAccounts, account.id);
         const error = Object.values(errors).find(Boolean);
         if (error) return { status: "failed", message: error };
@@ -962,7 +959,6 @@ if (import.meta.env.DEV) {
         };
         account.routeName = String(args.routeName ?? "").trim();
         account.routeShortName = routeOverride(args.routeShortName);
-        account.upstreamProxy = routeOverride(args.upstreamProxy);
         account.baseUrl = routeOverride(args.baseUrl);
         previewDeriveOfficialProfiles();
         return {
@@ -1488,7 +1484,6 @@ if (import.meta.env.DEV) {
             routeName: String(args.routeName ?? ""),
             routeShortName: String(args.routeShortName ?? ""),
             baseUrl: String(args.baseUrl ?? ""),
-            upstreamProxy: String(args.upstreamProxy ?? ""),
           }, previewConfig.profiles, previewOfficialAccounts, accountId);
           const error = Object.values(errors).find(Boolean);
           if (error) return { status: "failed", message: error };
@@ -1553,7 +1548,6 @@ if (import.meta.env.DEV) {
           };
           account.routeName = String(args.routeName ?? "").trim();
           account.routeShortName = routeOverride(args.routeShortName);
-          account.upstreamProxy = routeOverride(args.upstreamProxy);
           if ("baseUrl" in args) account.baseUrl = routeOverride(args.baseUrl);
           previewDeriveOfficialProfiles();
         }

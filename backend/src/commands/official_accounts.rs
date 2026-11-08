@@ -13,13 +13,11 @@ use super::{
     redacted_config, runtime_config_requires_restart, save_config_to_store, string_argument,
 };
 use crate::codex_config::codex_home;
-use crate::config::{
-    CodeyConfig, MAX_ROUTE_NAME_CHARS, MAX_ROUTE_SHORT_NAME_CHARS, validate_outbound_proxy_url,
-};
+use crate::config::{CodeyConfig, MAX_ROUTE_NAME_CHARS, MAX_ROUTE_SHORT_NAME_CHARS};
 use crate::official_accounts::{
     LoginPhase, OfficialAccountInvalid, OfficialAccountRecord, OfficialAccountStore,
-    SiwcLoginPhase, agent_host_id, refresh_if_stale_cached, refresh_siwc_if_stale_with_proxy,
-    revoke_siwc_session, start_login, start_siwc_login,
+    SiwcLoginPhase, agent_host_id, refresh_if_stale, refresh_siwc_if_stale, revoke_siwc_session,
+    start_login, start_siwc_login,
 };
 
 pub(super) async fn invoke(
@@ -110,31 +108,22 @@ pub(super) async fn invoke(
             string_argument(args, "accountId"),
             optional_argument::<String>(args, "routeName"),
             optional_argument::<String>(args, "routeShortName"),
-            optional_argument::<String>(args, "upstreamProxy"),
             optional_argument::<String>(args, "baseUrl"),
         ) {
-            (
-                Ok(account_id),
-                Ok(route_name),
-                Ok(route_short_name),
-                Ok(upstream_proxy),
-                Ok(base_url),
-            ) => {
+            (Ok(account_id), Ok(route_name), Ok(route_short_name), Ok(base_url)) => {
                 save_official_account_route_settings(
                     state,
                     account_id,
                     route_name.unwrap_or_default(),
                     route_short_name.unwrap_or_default(),
-                    upstream_proxy.unwrap_or_default(),
                     base_url.unwrap_or_default(),
                 )
                 .await
             }
-            (Err(error), _, _, _, _)
-            | (_, Err(error), _, _, _)
-            | (_, _, Err(error), _, _)
-            | (_, _, _, Err(error), _)
-            | (_, _, _, _, Err(error)) => Err(error),
+            (Err(error), _, _, _)
+            | (_, Err(error), _, _)
+            | (_, _, Err(error), _)
+            | (_, _, _, Err(error)) => Err(error),
         },
         _ => Err(format!("未知 Codey API 命令：{command}")),
     }
@@ -304,7 +293,10 @@ pub(super) async fn start_official_account_siwc(
         state.official_siwc_logins.lock().await.cancel_all();
     }
     tokio::task::yield_now().await;
-    let client = official_account_client(state, &record.id).await?;
+    let client = state
+        .http_client
+        .current(crate::official_accounts::OAUTH_TOKEN_URL)
+        .await;
     let session = start_siwc_login(client, &record, &host_id)
         .await
         .map_err(|error| format!("{error:#}"))?;
@@ -431,9 +423,7 @@ pub(super) async fn remove_official_account_siwc(
         .map_err(|error| format!("{error:#}"))?
         .ok_or_else(|| format!("找不到官方账号：{account_id}"))?;
     let remote_confirmed = match record.siwc.as_ref() {
-        Some(credential) => revoke_account_siwc(state, &account_id, credential)
-            .await
-            .is_ok(),
+        Some(credential) => revoke_account_siwc(state, credential).await.is_ok(),
         None => true,
     };
     let clear_store = state.official_accounts();
@@ -548,15 +538,12 @@ pub(super) async fn refresh_official_account_tokens(
         // 状态，重新添加账号会写入新凭据并清除标记。
         if !record.invalid() {
             let expected = record.clone();
-            let proxy = super::official_account_usage_proxy(state, account_id).await?;
-            match refresh_if_stale_cached(
+            match refresh_if_stale(
                 &state
                     .http_client
                     .current(crate::official_accounts::OAUTH_TOKEN_URL)
                     .await,
                 &mut record,
-                proxy.as_deref(),
-                Some(&state.official_proxied_clients),
             )
             .await
             {
@@ -622,15 +609,13 @@ pub(super) async fn refresh_official_account_tokens(
     // 线路已下线，没必要再碰远端）。SIWC 刷新失败只标记直连槽位，对话会
     // 在线路重算后自动回落到 Codex 平面。
     if !record.invalid() && record.siwc.is_some() {
-        match refresh_siwc_if_stale_with_proxy(
+        match refresh_siwc_if_stale(
             &state
                 .http_client
                 .current(crate::official_accounts::OAUTH_TOKEN_URL)
                 .await,
             &store,
             account_id,
-            Some(&state.official_proxied_clients),
-            None,
         )
         .await
         {
@@ -748,7 +733,7 @@ pub(super) async fn remove_official_account(
     .ok()
     .and_then(|result| result.ok().flatten());
     if let Some(credential) = siwc_credential
-        && let Err(error) = revoke_account_siwc(state, &account_id, &credential).await
+        && let Err(error) = revoke_account_siwc(state, &credential).await
     {
         error_log::record_failure(
             "official_siwc_revoke_failed",
@@ -824,35 +809,20 @@ pub(super) async fn drop_derived_official_routes(state: &Arc<AppState>) -> Resul
     Ok(())
 }
 
-async fn official_account_client(
-    state: &Arc<AppState>,
-    account_id: &str,
-) -> Result<reqwest::Client, String> {
-    let proxy = super::official_account_usage_proxy(state, account_id).await?;
-    let client = crate::official_accounts::official_http_client(
-        &state
-            .http_client
-            .current(crate::official_accounts::OAUTH_TOKEN_URL)
-            .await,
-        Some(&state.official_proxied_clients),
-        proxy.as_deref(),
-    )
-    .map_err(|_| "无法创建官方账号代理客户端".to_string())?;
-    Ok(client)
-}
-
 async fn revoke_account_siwc(
     state: &Arc<AppState>,
-    account_id: &str,
     credential: &crate::official_accounts::SiwcCredential,
 ) -> Result<(), String> {
-    let client = official_account_client(state, account_id).await?;
+    let client = state
+        .http_client
+        .current(crate::official_accounts::OAUTH_TOKEN_URL)
+        .await;
     revoke_siwc_session(&client, credential)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
-/// Saves the route name, short name, gateway and upstream proxy of one
+/// Saves the route name, short name and gateway of one
 /// official account and re-derives every official route, so the edited
 /// account shows its new name without becoming the default.
 pub(super) async fn save_official_account_route_settings(
@@ -860,7 +830,6 @@ pub(super) async fn save_official_account_route_settings(
     account_id: String,
     route_name: String,
     route_short_name: String,
-    upstream_proxy: String,
     base_url: String,
 ) -> Result<Value, String> {
     let account_id = write_official_account_route_settings(
@@ -868,7 +837,6 @@ pub(super) async fn save_official_account_route_settings(
         account_id,
         route_name,
         route_short_name,
-        upstream_proxy,
         base_url,
     )
     .await?;
@@ -886,7 +854,6 @@ pub(crate) async fn write_official_account_route_settings(
     account_id: String,
     route_name: String,
     route_short_name: String,
-    upstream_proxy: String,
     base_url: String,
 ) -> Result<String, String> {
     let account_id = account_id.trim().to_string();
@@ -895,7 +862,6 @@ pub(crate) async fn write_official_account_route_settings(
     }
     let route_name = route_name.trim().to_string();
     let route_short_name = route_short_name.trim().to_string();
-    let upstream_proxy = upstream_proxy.trim().to_string();
     if route_short_name.is_empty() {
         return Err("请输入短名称".to_string());
     }
@@ -905,9 +871,6 @@ pub(crate) async fn write_official_account_route_settings(
     }
     if route_short_name.chars().count() > MAX_ROUTE_SHORT_NAME_CHARS {
         return Err(format!("短名称最多 {MAX_ROUTE_SHORT_NAME_CHARS} 个字符"));
-    }
-    if !upstream_proxy.is_empty() {
-        validate_outbound_proxy_url(&upstream_proxy, "官方账号线路的上游代理")?;
     }
     // 留空或官方默认地址都表示不覆盖网关。
     let base_url = crate::codex_provider::normalize_official_gateway_base_url(&base_url)?;
@@ -934,7 +897,6 @@ pub(crate) async fn write_official_account_route_settings(
     let saved_id = account_id.clone();
     let saved_name = Some(route_name);
     let saved_short_name = (!route_short_name.is_empty()).then_some(route_short_name);
-    let saved_proxy = (!upstream_proxy.is_empty()).then_some(upstream_proxy);
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let accounts = store.list()?;
         if !accounts.iter().any(|record| record.id == saved_id) {
@@ -948,13 +910,7 @@ pub(crate) async fn write_official_account_route_settings(
             let label = other.email.as_deref().unwrap_or(other.id.as_str());
             anyhow::bail!("短名称「{short_name}」已被官方账号 {label} 使用");
         }
-        store.update_route_settings(
-            &saved_id,
-            saved_name,
-            saved_short_name,
-            saved_proxy,
-            base_url,
-        )?;
+        store.update_route_settings(&saved_id, saved_name, saved_short_name, base_url)?;
         Ok(())
     })
     .await

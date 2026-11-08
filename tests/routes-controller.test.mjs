@@ -195,17 +195,17 @@ test("原生模式只在单独关闭路由时先保存，再同步并打开模�
   assert.equal(blocked.saved.length, 0);
 });
 
-test("官方线路组合保存不清除省略的预算和代理，默认模型必须属于线路", async (t) => {
+test("官方线路组合保存不清除省略的预算，默认模型必须属于线路", async (t) => {
   installControllerWindow(t);
   const h = createRoutesHarness();
   assert.equal(await h.render().saveOfficialRouteSettings("official", [], false, true, undefined), false);
   assert.equal(await h.render().saveOfficialRouteSettings("a", ["m1"], false, true, undefined), false);
   const settings = { accountId: "account", routeName: "", routeShortName: "官", baseUrl: "https://example.com" };
-  assert.equal(await h.render().saveOfficialRouteSettings("official", ["official-model"], true, true, undefined, undefined, settings), true);
+  assert.equal(await h.render().saveOfficialRouteSettings("official", ["official-model"], true, true, undefined, settings), true);
   assert.deepEqual(h.calls[0].args, { routeId: "official", models: ["official-model"], showAccountUsageInHeader: true, enabled: true, ...settings });
   assert.equal(h.remembered.length, 1);
-  await h.render().saveOfficialRouteSettings("official", ["official-model"], true, true, {}, "");
-  assert.equal(h.calls[1].args.upstreamProxy, "");
+  await h.render().saveOfficialRouteSettings("official", ["official-model"], true, true, {});
+  assert.equal(Object.hasOwn(h.calls[1].args, "upstreamProxy"), false);
   assert.deepEqual(h.calls[1].args.modelContexts, {});
   await h.render().setRouteDefaultModel("a", "unknown");
   assert.match(h.notices.at(-1).text, /不属于该线路/);

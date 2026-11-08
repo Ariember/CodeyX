@@ -49,10 +49,6 @@ pub struct ProviderProfile {
     /// Per-route request headers editable in the local router settings.
     #[serde(default)]
     pub model_request_headers: BTreeMap<String, String>,
-    /// Optional per-route outbound proxy URL (http/https/socks5/socks5h)。
-    /// 设置后该线路的上游流量改走此代理而非系统代理，并禁用上游 WebSocket。
-    #[serde(default)]
-    pub upstream_proxy: String,
     /// Stable id of the provider in the source Codex configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_provider_id: Option<String>,
@@ -237,7 +233,6 @@ impl ProviderProfile {
             api_key_configured: false,
             clear_api_key: false,
             model_request_headers: BTreeMap::new(),
-            upstream_proxy: String::new(),
             source_provider_id: None,
             plugin_owner_id: None,
             plugin_route_spec: None,
@@ -312,7 +307,6 @@ impl ProviderProfile {
         self.short_name = self.short_name.trim().to_string();
         self.base_url = self.base_url.trim().trim_end_matches('/').to_string();
         self.api_key = self.api_key.trim().to_string();
-        self.upstream_proxy = self.upstream_proxy.trim().to_string();
         self.source_provider_id = self
             .source_provider_id
             .take()
@@ -399,12 +393,6 @@ impl ProviderProfile {
             return Err(format!(
                 "线路「{name}」只有 OpenAI Responses 协议可以启用 WebSocket"
             ));
-        }
-        if !self.upstream_proxy.trim().is_empty() {
-            validate_outbound_proxy_url(
-                self.upstream_proxy.trim(),
-                &format!("线路「{name}」的上游代理"),
-            )?;
         }
         let short_name = self.short_name.trim();
         if short_name.chars().count() > MAX_ROUTE_SHORT_NAME_CHARS {
@@ -561,54 +549,6 @@ fn normalize_prompt_optimization_upstream_protocol(value: &str) -> String {
         | UPSTREAM_PROTOCOL_ANTHROPIC_MESSAGES => value.trim().to_string(),
         _ => default_prompt_optimization_upstream_protocol(),
     }
-}
-
-/// 线路上游代理地址。与 API URL 不同，代理地址允许携带用户名密码（代理认证）。
-pub(crate) fn validate_outbound_proxy_url(value: &str, label: &str) -> Result<(), String> {
-    let url = reqwest::Url::parse(value)
-        .map_err(|_| format!("{label}不是有效的代理地址（http/https/socks5/socks5h）"))?;
-    if url.host_str().is_none() || !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h")
-    {
-        return Err(format!("{label}必须是 http、https、socks5 或 socks5h 地址"));
-    }
-    reqwest::Proxy::all(url.clone()).map_err(|_| format!("{label}无法用作代理"))?;
-    let unusable_host = url
-        .host_str()
-        .and_then(|host| {
-            host.trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<std::net::IpAddr>()
-                .ok()
-        })
-        .is_some_and(|ip| match ip {
-            std::net::IpAddr::V4(ip) => {
-                ip.is_unspecified() || ip.is_link_local() || ip.is_broadcast()
-            }
-            std::net::IpAddr::V6(ip) => ip.is_unspecified() || ip.is_unicast_link_local(),
-        });
-    if unusable_host {
-        return Err(format!("{label}不能指向未指定地址或链路本地地址"));
-    }
-    Ok(())
-}
-
-/// Codex 启动代理地址。除线路上游代理的通用要求外，Chromium 的
-/// `--proxy-server` 不支持代理认证，SOCKS 地址也必须显式端口，这里
-/// 叠加更严的约束。
-pub(crate) fn validate_codex_launch_proxy(value: &str) -> Result<(), String> {
-    validate_outbound_proxy_url(value, "Codex 启动代理")?;
-    let url = reqwest::Url::parse(value).expect("启动代理地址已通过校验");
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err("Codex 启动代理不能包含用户名或密码；Chromium 命令行代理不支持认证".into());
-    }
-    // 非特殊协议（socks5/socks5h）解析出的 path 是空串而非 "/"。
-    if !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
-        return Err("Codex 启动代理只能包含协议、地址和端口".into());
-    }
-    if matches!(url.scheme(), "socks5" | "socks5h") && url.port().is_none() {
-        return Err("Codex 启动代理的 SOCKS 地址必须带端口".into());
-    }
-    Ok(())
 }
 
 pub(crate) fn validate_outbound_api_url(value: &str, label: &str) -> Result<reqwest::Url, String> {
@@ -905,14 +845,6 @@ pub struct CodeyConfig {
     /// Codey-managed Codex launch. Disabled by default and ignored on macOS.
     #[serde(default)]
     pub gpu_launch_mode: GpuLaunchMode,
-    /// Optional launch proxy (http/https/socks5/socks5h) applied to the next
-    /// Codey-managed Codex launch: `--proxy-server` for the client and proxy
-    /// environment variables for the app-server processes it spawns.
-    #[serde(default)]
-    pub codex_launch_proxy: String,
-    /// Preserve retired proxy-pool settings without applying them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network_proxy: Option<serde_json::Value>,
     /// Publishes Codey's embedded FastCtx file tools to Codex for the next
     /// runtime. Disabled by default so existing tool behavior is unchanged.
     #[serde(default)]
@@ -1069,8 +1001,6 @@ impl Default for CodeyConfig {
             protect_crashpad_pending: true,
             slim_codex_pet: true,
             gpu_launch_mode: GpuLaunchMode::Off,
-            codex_launch_proxy: String::new(),
-            network_proxy: None,
             fast_context_tools: false,
             subagent_optimization: false,
             subagent_model: default_subagent_model(),
@@ -1164,7 +1094,6 @@ impl CodeyConfig {
         self.webhook.normalize();
         self.prompt_optimization.normalize();
         self.conversation_git.model = self.conversation_git.model.trim().to_string();
-        self.codex_launch_proxy = self.codex_launch_proxy.trim().to_string();
         self
     }
 
@@ -3140,30 +3069,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retired_proxy_pool_settings_are_preserved_without_validation_or_runtime_effects() {
+    fn retired_proxy_settings_are_ignored() {
+        let mut input = serde_json::to_value(named_config("旧代理线路")).unwrap();
+        input["codexLaunchProxy"] = serde_json::json!("not-a-url");
+        input["networkProxy"] = serde_json::json!({"schemaVersion":999,"nodes":"invalid"});
+        input["profiles"][0]["upstreamProxy"] = serde_json::json!("ftp://proxy.example.com");
+        let config: CodeyConfig = serde_json::from_value(input).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(directory.path().join("config.json"));
-        for legacy in [
-            serde_json::json!({"schemaVersion":999,"nodes":"invalid","processCapture":true}),
-            serde_json::json!(["unknown legacy shape"]),
-            serde_json::json!("retired"),
-        ] {
-            let config: CodeyConfig = serde_json::from_value(serde_json::json!({
-                "networkProxy": legacy,
-            }))
-            .unwrap();
-            assert!(config.codex_launch_proxy.is_empty());
-            let stored = store.persist(config).unwrap();
-            assert_eq!(stored.network_proxy.as_ref(), Some(&legacy));
-            assert_eq!(store.load().unwrap().network_proxy.as_ref(), Some(&legacy));
-        }
-        let default = CodeyConfig::default();
-        assert!(
-            serde_json::to_value(default)
-                .unwrap()
-                .get("networkProxy")
-                .is_none()
-        );
+        store.persist(config).unwrap();
+        let saved = serde_json::to_value(store.load().unwrap()).unwrap();
+        assert!(saved.get("codexLaunchProxy").is_none());
+        assert!(saved.get("networkProxy").is_none());
+        assert!(saved["profiles"][0].get("upstreamProxy").is_none());
+        assert_eq!(saved["profiles"][0]["name"], "旧代理线路");
     }
 
     fn named_config(name: &str) -> CodeyConfig {
@@ -3201,81 +3120,6 @@ mod tests {
                 validate_outbound_api_url(rejected, "测试 API 地址").is_err(),
                 "{rejected}"
             );
-        }
-    }
-
-    #[test]
-    fn upstream_proxy_urls_validate_scheme_and_host() {
-        for accepted in [
-            "http://127.0.0.1:7890",
-            "https://proxy.example.com:8443",
-            "socks5://127.0.0.1:1080",
-            "socks5h://proxy.example.com:1080",
-            // 代理认证凭据允许写在地址里，区别于 API URL。
-            "http://user:pass@proxy.example.com:8080",
-        ] {
-            assert!(
-                validate_outbound_proxy_url(accepted, "测试代理").is_ok(),
-                "{accepted}"
-            );
-        }
-        for rejected in [
-            "ftp://proxy.example.com:21",
-            "socks4://127.0.0.1:1080",
-            "127.0.0.1:7890",
-            "http://0.0.0.0:7890",
-            "http://[fe80::1]:7890",
-        ] {
-            assert!(
-                validate_outbound_proxy_url(rejected, "测试代理").is_err(),
-                "{rejected}"
-            );
-        }
-
-        let mut config = named_config("代理线路");
-        config.profiles[0].base_url = "https://api.example.com/v1".to_string();
-        config.profiles[0].api_key = "sk-test".to_string();
-        config.profiles[0].upstream_proxy = "ftp://proxy.example.com".to_string();
-        assert!(
-            config.profiles[0]
-                .validate()
-                .unwrap_err()
-                .contains("上游代理")
-        );
-        config.profiles[0].upstream_proxy = "socks5://127.0.0.1:1080".to_string();
-        assert!(config.profiles[0].validate().is_ok());
-    }
-
-    #[test]
-    fn codex_launch_proxy_rejects_credentials_paths_and_portless_socks() {
-        for accepted in [
-            "http://127.0.0.1:7890",
-            "https://proxy.example.com:8443",
-            "https://proxy.example.com",
-            "socks5://127.0.0.1:1080",
-            "socks5h://proxy.example.com:1080",
-            "http://[::1]:7890",
-        ] {
-            assert!(validate_codex_launch_proxy(accepted).is_ok(), "{accepted}");
-        }
-        for rejected in [
-            // Chromium 命令行代理不支持认证。
-            "http://user:pass@proxy.example.com:8080",
-            "socks5://user@127.0.0.1:1080",
-            // 只允许协议、地址和端口；非特殊协议的 path 解析为空串。
-            "http://127.0.0.1:7890/v1",
-            "socks5://127.0.0.1:1080/v1",
-            "http://127.0.0.1:7890?x=1",
-            "http://127.0.0.1:7890#frag",
-            // Chromium 需要 host:port，SOCKS 不能省略端口。
-            "socks5://127.0.0.1",
-            "socks5h://proxy.example.com",
-            // 通用约束沿用线路上游代理。
-            "ftp://proxy.example.com:21",
-            "127.0.0.1:7890",
-            "http://0.0.0.0:7890",
-        ] {
-            assert!(validate_codex_launch_proxy(rejected).is_err(), "{rejected}");
         }
     }
 

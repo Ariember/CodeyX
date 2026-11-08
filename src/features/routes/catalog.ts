@@ -33,7 +33,6 @@ export function nativeRoute(profiles: Profile[], provider: ProviderStatus["provi
     supportsNativeWebSearch: matching?.supportsNativeWebSearch,
     supportsAutoReview: matching?.supportsAutoReview,
     modelRequestHeaders: matching?.modelRequestHeaders || {},
-    upstreamProxy: matching?.upstreamProxy || "",
   };
 }
 

@@ -204,12 +204,6 @@ pub(super) async fn runtime_status_with_options(
     );
     if let Some(object) = status.as_object_mut() {
         object.insert("codexAppVersion".into(), Value::String(codex_app_version));
-        if let Some(warning) = runtime
-            .as_ref()
-            .and_then(|runtime| runtime.startup_warning.clone())
-        {
-            object.insert("startupWarning".into(), Value::String(warning));
-        }
         if let Some(error) = startup_error {
             object.insert("startupError".into(), Value::String(error));
         }
@@ -459,7 +453,6 @@ async fn launch_codey_inner_attempt(state: &Arc<AppState>) -> anyhow::Result<Val
             |error| format!("Codey 已进入退出流程，停止刚启动的 Codex 失败：{error}"),
         )));
     }
-    let startup_warning = runtime.startup_warning.clone();
     *state.runtime.lock().await = Some(Arc::new(runtime));
     super::storage_guards::start_trace_guard_watcher(state).await;
     super::sessions::start_cleanup_watcher(state).await;
@@ -474,7 +467,7 @@ async fn launch_codey_inner_attempt(state: &Arc<AppState>) -> anyhow::Result<Val
         codex_exit,
         runtime_generation,
     ));
-    Ok(json!({"status":"running", "warning": startup_warning}))
+    Ok(json!({"status":"running"}))
 }
 
 pub(super) async fn launch_codey_inner(state: &Arc<AppState>) -> anyhow::Result<Value> {

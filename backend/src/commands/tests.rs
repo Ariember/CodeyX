@@ -1801,7 +1801,7 @@ async fn legacy_subagent_scalars_update_only_the_default_role() {
 }
 
 #[tokio::test]
-async fn codex_launch_proxy_saves_without_validation() {
+async fn retired_proxy_settings_are_ignored_when_saving() {
     let directory = tempfile::tempdir().unwrap();
     let initial = CodeyConfig::default();
     let state = Arc::new(AppState {
@@ -1809,20 +1809,14 @@ async fn codex_launch_proxy_saves_without_validation() {
         config: RwLock::new(initial.clone()),
         ..AppState::default()
     });
-    for value in [
-        " http://user:pass@127.0.0.1:7890 ",
-        " not-a-url ",
-        " socks5h://127.0.0.1:1080 ",
-        "  ",
-    ] {
-        let mut payload = serde_json::to_value(state.config.read().await.clone()).unwrap();
-        payload["codexLaunchProxy"] = json!(value);
-        let result = invoke_api(&state, "save_codey_config", json!({ "config": payload })).await;
-
-        assert_eq!(result["status"], "ok");
-        assert_eq!(state.config.read().await.codex_launch_proxy, value.trim());
-        assert_eq!(state.store.load().unwrap().codex_launch_proxy, value.trim());
-    }
+    let mut payload = serde_json::to_value(initial).unwrap();
+    payload["codexLaunchProxy"] = json!("http://127.0.0.1:7890");
+    payload["networkProxy"] = json!({"processCapture":true});
+    let result = invoke_api(&state, "save_codey_config", json!({ "config": payload })).await;
+    assert_eq!(result["status"], "ok");
+    let saved = serde_json::to_value(state.store.load().unwrap()).unwrap();
+    assert!(saved.get("codexLaunchProxy").is_none());
+    assert!(saved.get("networkProxy").is_none());
 }
 
 #[tokio::test]

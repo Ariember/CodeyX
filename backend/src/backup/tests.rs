@@ -81,7 +81,6 @@ fn restore_preserves_local_managed_routes_models_and_paths() {
     assert_eq!(next.selected_models_by_provider[&key], vec!["plugin-model"]);
     assert_eq!(next.codex_app_path, "local-app");
     assert_eq!(next.user_scripts, vec!["local-script"]);
-    assert_eq!(next.network_proxy, previous.network_proxy);
     assert_eq!(next.settings_revision, 9);
     let empty = parse(&export(CodeyConfig::default()).unwrap())
         .unwrap()

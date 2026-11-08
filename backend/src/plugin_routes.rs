@@ -139,9 +139,6 @@ pub(crate) fn retain_plugin_ownership(
             profile.supports_remote_compaction = false;
             profile.supports_native_web_search = false;
             profile.supports_auto_review = false;
-            if !profile.upstream_proxy.trim().is_empty() {
-                return Err("当前插件传输协议不支持线路代理，请清空代理设置".into());
-            }
         }
         return Ok(());
     }
@@ -204,7 +201,6 @@ fn apply_spec(
     if !keep_user_fields {
         profile.api_key.clear();
         profile.api_key_configured = false;
-        profile.upstream_proxy.clear();
         profile.enabled = true;
         profile.supports_remote_compaction = false;
         profile.supports_websockets = false;
@@ -215,7 +211,6 @@ fn apply_spec(
     if spec.transport.is_some() {
         profile.api_key.clear();
         profile.api_key_configured = false;
-        profile.upstream_proxy.clear();
         profile.supports_websockets = false;
         profile.supports_remote_compaction = false;
         profile.supports_native_web_search = false;

@@ -22,7 +22,6 @@ pub(crate) struct Route {
 
 struct SharedClient {
     route_key: String,
-    launch_generation: u64,
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<tokio::process::ChildStdout>,
@@ -96,14 +95,13 @@ enum Reply {
 
 async fn invoke(route: &Route, method: &str, params: &Value) -> Result<Reply, String> {
     let mut guard = SHARED.lock().await;
-    let launch = crate::launch_proxy::shared_app_server_launch();
     let key = route_key(route);
-    let reusable = guard.as_mut().is_some_and(|client| {
-        client.route_key == key && client.launch_generation == launch.generation && !client.exited()
-    });
+    let reusable = guard
+        .as_mut()
+        .is_some_and(|client| client.route_key == key && !client.exited());
     if !reusable {
         *guard = None;
-        *guard = Some(SharedClient::start(route, launch).await?);
+        *guard = Some(SharedClient::start(route).await?);
     }
     let client = guard.as_mut().expect("共享 app-server 已启动");
     match client.request(method, params).await {
@@ -116,10 +114,7 @@ async fn invoke(route: &Route, method: &str, params: &Value) -> Result<Reply, St
 }
 
 impl SharedClient {
-    async fn start(
-        route: &Route,
-        launch: crate::launch_proxy::SharedAppServerLaunch,
-    ) -> Result<Self, String> {
+    async fn start(route: &Route) -> Result<Self, String> {
         let executable = codex_cli().ok_or("未找到 Codex app-server")?;
         let mut command = Command::new(executable);
         command.arg("app-server").arg("--listen").arg("stdio://");
@@ -130,7 +125,6 @@ impl SharedClient {
             .env("CODEX_HOME", crate::codex_config::codex_home())
             .env_remove("CODEX_CLI_PATH")
             .env_remove("CODEX_APP_SERVER_FORCE_CLI")
-            .envs(launch.environment)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -140,7 +134,6 @@ impl SharedClient {
         let stdout = child.stdout.take().ok_or("app-server 缺少输出")?;
         let mut client = Self {
             route_key: route_key(route),
-            launch_generation: launch.generation,
             child,
             stdin,
             stdout: BufReader::new(stdout),

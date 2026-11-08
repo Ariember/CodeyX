@@ -58,8 +58,8 @@ pub(crate) use platform::{activate_visible_windows_codex_window, windows_process
 #[cfg(windows)]
 pub(crate) use process::windows_cli_wrapper_target;
 use process::{
-    CodexLaunchOptions, SpawnedCodex, prepare_codex_for_launch, reap_child_after_cleanup,
-    spawn_codex, spawn_codex_exit_watcher,
+    SpawnedCodex, prepare_codex_for_launch, reap_child_after_cleanup, spawn_codex,
+    spawn_codex_exit_watcher,
 };
 #[cfg(test)]
 use process::{codex_runtime_arguments, gpu_launch_arguments};
@@ -276,7 +276,6 @@ impl RuntimeSubagentConfig {
 
 pub struct CodeyRuntime {
     pub codex_app_path: PathBuf,
-    pub startup_warning: Option<String>,
     pub maintenance: MaintenanceStatus,
     pub applied_config: CodeyConfig,
     applied_model_config: RwLock<AppliedModelConfig>,
@@ -1833,11 +1832,6 @@ async fn prepare_startup_patches_with_port_selector(
     Ok(StartupPatchState { debug_port })
 }
 
-struct RuntimeLaunchOverrides<'a> {
-    runtime_config_overrides: &'a [String],
-    launch_proxy: Option<&'a crate::launch_proxy::CodexLaunchProxy>,
-}
-
 async fn spawn_and_inject_runtime(
     home: &std::path::Path,
     config: &CodeyConfig,
@@ -1845,12 +1839,8 @@ async fn spawn_and_inject_runtime(
     injection_scripts: &cdp::PreparedInjectionScripts,
     mut storage: StartupStorageState,
     patch: &StartupPatchState,
-    overrides: RuntimeLaunchOverrides<'_>,
+    runtime_config_overrides: &[String],
 ) -> Result<SpawnedRenderer> {
-    let RuntimeLaunchOverrides {
-        runtime_config_overrides,
-        launch_proxy,
-    } = overrides;
     let spawn_inject_started = Instant::now();
     let mut spawned = match spawn_codex(
         &mut storage.app_dir,
@@ -1858,10 +1848,7 @@ async fn spawn_and_inject_runtime(
         config.slim_codex_pet,
         config.subagent_optimization,
         config.misc_model_catalog_id(),
-        CodexLaunchOptions {
-            gpu_launch_mode: config.gpu_launch_mode,
-            launch_proxy,
-        },
+        config.gpu_launch_mode,
         runtime_config_overrides,
     )
     .await
@@ -1876,11 +1863,6 @@ async fn spawn_and_inject_runtime(
             .await);
         }
     };
-    crate::launch_proxy::set_active(
-        launch_proxy
-            .filter(|_| spawned.launch_environment_applied)
-            .cloned(),
-    );
     let codex_spawn_ms = spawn_inject_started.elapsed().as_millis() as u64;
     let maintenance = MaintenanceStatus {
         session_status: storage.session_maintenance.status,
@@ -2129,11 +2111,6 @@ impl CodeyRuntime {
                 crate::codex_config::unsupported_runtime_platform_message()
             ));
         }
-        let (launch_proxy, startup_warning) =
-            crate::launch_proxy::CodexLaunchProxy::resolve_for_start(&config.codex_launch_proxy);
-        if let Some(warning) = &startup_warning {
-            crate::launch_proxy::record_startup_warning(warning);
-        }
         let home = codex_home();
         #[cfg(windows)]
         validate_windows_native_backend(home).await?;
@@ -2216,7 +2193,6 @@ impl CodeyRuntime {
                     home,
                     &storage.app_dir,
                     config.local_router_enabled,
-                    launch_proxy.is_none(),
                     recovery::recoverable(error),
                 )
                 .await);
@@ -2237,10 +2213,7 @@ impl CodeyRuntime {
             &injection_scripts,
             storage,
             &patch,
-            RuntimeLaunchOverrides {
-                runtime_config_overrides: &runtime_config_overrides,
-                launch_proxy: launch_proxy.as_ref(),
-            },
+            &runtime_config_overrides,
         )
         .await
         {
@@ -2251,23 +2224,12 @@ impl CodeyRuntime {
                     home,
                     &recovery_app_dir,
                     config.local_router_enabled,
-                    launch_proxy.is_none(),
                     error,
                 )
                 .await);
             }
         };
         stage_timings.mark("spawnAndInjectMs");
-        let startup_warning = startup_warning.or_else(|| {
-            let warning = crate::launch_proxy::application_warning(
-                launch_proxy.is_some(),
-                spawned.launch_environment_applied,
-            );
-            if let Some(warning) = &warning {
-                crate::launch_proxy::record_startup_warning(warning);
-            }
-            warning
-        });
         stage_timings.report();
         #[cfg(target_os = "macos")]
         let inspector_argument = spawned.inspector_argument.clone();
@@ -2322,7 +2284,6 @@ impl CodeyRuntime {
                 crashpad_guard_shutdown: Mutex::new(Some(crashpad_guard_shutdown)),
                 crashpad_guard_task: Mutex::new(Some(crashpad_guard_task)),
                 local_router,
-                startup_warning,
             },
             codex_exit,
         ))

@@ -1,7 +1,7 @@
 import type { Profile } from "../../App.types";
 import { MAX_ROUTE_NAME_CHARACTERS } from "../../officialRouteSettings";
 import { validateThirdPartyRouteShortName } from "../../routeShortNames";
-import { validateOutboundApiUrl, validateOutboundProxyUrl } from "../../urlValidation";
+import { validateOutboundApiUrl } from "../../urlValidation";
 
 export function createRouteDraft(id: string): Profile {
   return {
@@ -15,7 +15,6 @@ export function createRouteDraft(id: string): Profile {
     authMode: "apiKey",
     apiKeyConfigured: false,
     modelRequestHeaders: {},
-    upstreamProxy: "",
     clearApiKey: false,
     officialAccount: false,
     supportsRemoteCompaction: false,
@@ -30,13 +29,11 @@ export type RouteDraftErrors = {
   shortName: string;
   baseUrl: string;
   apiKey: string;
-  upstreamProxy: string;
 };
 
 export function validateRouteDraft(route: Profile, profiles: readonly Profile[]): RouteDraftErrors {
   if (route.authMode === "officialAccount") {
-    return { name: "", shortName: "", baseUrl: "", apiKey: "",
-      upstreamProxy: validateOutboundProxyUrl(route.upstreamProxy || "") };
+    return { name: "", shortName: "", baseUrl: "", apiKey: "" };
   }
   return {
     name: Array.from(route.name.trim()).length > MAX_ROUTE_NAME_CHARACTERS
@@ -44,7 +41,6 @@ export function validateRouteDraft(route: Profile, profiles: readonly Profile[])
     shortName: validateThirdPartyRouteShortName(route.shortName, profiles, route.id),
     baseUrl: validateOutboundApiUrl(route.baseUrl),
     apiKey: route.apiKey.trim() === "" && !route.apiKeyConfigured ? "请输入 API Key" : "",
-    upstreamProxy: validateOutboundProxyUrl(route.upstreamProxy || ""),
   };
 }
 

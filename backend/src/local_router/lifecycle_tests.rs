@@ -714,7 +714,7 @@ async fn network_failure_refreshes_the_next_request_without_replaying_the_post()
     let url = format!("http://{}/v1", listener.local_addr().unwrap());
     let (config, provider, model) = super::tests::router_config(url.clone());
     let server = test_server(&config);
-    let before = server.http_clients.client(&url, None).await.unwrap();
+    let before = server.http_clients.client(&url).await.unwrap();
     let (not_replayed_tx, not_replayed_rx) = oneshot::channel();
     let upstream = tokio::spawn(async move {
         let (mut first, _) = listener.accept().await.unwrap();
@@ -745,7 +745,7 @@ async fn network_failure_refreshes_the_next_request_without_replaying_the_post()
         .await
         .unwrap()
         .unwrap();
-    let after = server.http_clients.client(&url, None).await.unwrap();
+    let after = server.http_clients.client(&url).await.unwrap();
     assert_ne!(before.generation, after.generation);
     let mut second = CapturedDownstream::default();
     invoke(&server, &model, false, &mut second).await.unwrap();

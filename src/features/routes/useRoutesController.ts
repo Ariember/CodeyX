@@ -276,7 +276,7 @@ export function useRoutesController({ active, config, dirty, isBusy, provider, s
   }
 
   async function saveOfficialRouteSettings(routeId: string, models: string[], showAccountUsageInHeader: boolean, enabled: boolean,
-    modelContexts: Record<string, ModelContextConfig> | undefined, upstreamProxy?: string,
+    modelContexts: Record<string, ModelContextConfig> | undefined,
     routeSettings?: { accountId: string; routeName: string; routeShortName: string; baseUrl: string },
   ) {
     if (!config) return false;
@@ -287,8 +287,7 @@ export function useRoutesController({ active, config, dirty, isBusy, provider, s
     await runRouteOperation("save-official-route-settings", async () => {
       const modelResult = await routeRequests.saveOfficial({ routeId, models, enabled, showAccountUsageInHeader,
         ...(modelContexts === undefined ? {} : { modelContexts }),
-        // undefined 保持已有设置；空字符串显式清除代理。
-        ...(upstreamProxy === undefined ? {} : { upstreamProxy }), ...routeSettings });
+        ...routeSettings });
       saved = true;
       if (!mounted.current) return;
       if (!applyRouteResult(modelResult)) return;

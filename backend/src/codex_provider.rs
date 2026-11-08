@@ -159,7 +159,7 @@ fn launch_official_profiles(
     Ok((profiles, true))
 }
 
-/// The official-account editor stores its route name, short name, proxy and
+/// The official-account editor stores its route name, short name and
 /// gateway per account; every stored account owns one derived official route.
 fn apply_account_route_overrides(
     profile: &mut ProviderProfile,
@@ -175,9 +175,6 @@ fn apply_account_route_overrides(
     profile.short_name = trimmed(record.route_short_name.as_deref())
         .map(ToString::to_string)
         .unwrap_or_default();
-    if let Some(proxy) = trimmed(record.upstream_proxy.as_deref()) {
-        profile.upstream_proxy = proxy.to_string();
-    }
     // 留空表示继续使用官方网关；自定义地址写到派生线路上，路由快照据此转发。
     if let Some(base_url) = trimmed(record.base_url.as_deref()) {
         profile.base_url = base_url.trim_end_matches('/').to_string();
@@ -391,7 +388,6 @@ fn profile_from_provider(
         api_key_configured: !provider.official,
         clear_api_key: false,
         model_request_headers: BTreeMap::new(),
-        upstream_proxy: String::new(),
         source_provider_id: None,
         plugin_owner_id: None,
         plugin_route_spec: None,
@@ -920,7 +916,6 @@ experimental_bearer_token = "sk-relay"
             added_at,
             route_name: None,
             route_short_name: None,
-            upstream_proxy: None,
             base_url: None,
             invalid_reason: None,
             invalid_since: None,
@@ -995,7 +990,6 @@ experimental_bearer_token = "sk-relay"
         assert_eq!(default_name, "官方账号1");
         assert_eq!(profile.short_name, "官方");
         assert_eq!(profile.display_short_name(), "官方");
-        assert!(profile.upstream_proxy.is_empty());
 
         let account_id = store.default_account_id().unwrap().unwrap();
         store
@@ -1003,7 +997,6 @@ experimental_bearer_token = "sk-relay"
                 &account_id,
                 Some("主力官方号".into()),
                 Some("主".into()),
-                Some("http://127.0.0.1:7890".into()),
                 Some("https://gateway.example/backend-api/codex/".into()),
             )
             .unwrap();
@@ -1014,7 +1007,6 @@ experimental_bearer_token = "sk-relay"
         };
         assert_eq!(profile.name, "主力官方号");
         assert_eq!(profile.short_name, "主");
-        assert_eq!(profile.upstream_proxy, "http://127.0.0.1:7890");
         assert_eq!(
             profile.base_url,
             "https://gateway.example/backend-api/codex"
@@ -1025,7 +1017,7 @@ experimental_bearer_token = "sk-relay"
         );
 
         store
-            .update_route_settings(&account_id, Some("Plus".into()), None, None, None)
+            .update_route_settings(&account_id, Some("Plus".into()), None, None)
             .unwrap();
         let OfficialAccountProfileStatus::Available(profile) =
             launch_status(home.path(), &store).unwrap()
@@ -1036,13 +1028,7 @@ experimental_bearer_token = "sk-relay"
         assert_eq!(profile.display_short_name(), "Pl");
 
         store
-            .update_route_settings(
-                &account_id,
-                Some(String::new()),
-                Some("主".into()),
-                None,
-                None,
-            )
+            .update_route_settings(&account_id, Some(String::new()), Some("主".into()), None)
             .unwrap();
         let OfficialAccountProfileStatus::Available(profile) =
             launch_status(home.path(), &store).unwrap()
@@ -1062,7 +1048,7 @@ experimental_bearer_token = "sk-relay"
         );
 
         store
-            .update_route_settings(&account_id, None, None, None, None)
+            .update_route_settings(&account_id, None, None, None)
             .unwrap();
         let OfficialAccountProfileStatus::Available(profile) =
             launch_status(home.path(), &store).unwrap()
@@ -1072,7 +1058,6 @@ experimental_bearer_token = "sk-relay"
         assert_eq!(profile.name, default_name);
         assert_eq!(profile.short_name, "官方");
         assert_eq!(profile.display_short_name(), "官方");
-        assert!(profile.upstream_proxy.is_empty());
         assert!(profile.base_url.is_empty());
         assert_eq!(
             official_route_base_url(&profile),

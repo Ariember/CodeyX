@@ -13,7 +13,6 @@ export function configLoadNotice(result: ConfigLoadResult, status: RuntimeStatus
   if (errors.length > 0) return { tone: "error", text: errors.join("；") };
   const application = status?.configApply && status.configApply.settingsRevision >= result.config.settingsRevision ? status.configApply : null;
   if (application?.phase === "failed" || application?.applyError) return configApplyNotice(application);
-  if (status?.startupWarning) return { tone: "info", text: status.startupWarning };
   if (application) return configApplyNotice(application);
   if (status?.restartRequired) return { tone: "info", text: "已保存的配置需重启 Codex 后生效" };
   if (status && !status.running) return { tone: "info", text: "CodeyX 运行时已就绪" };

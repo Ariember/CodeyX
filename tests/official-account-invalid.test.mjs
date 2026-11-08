@@ -45,11 +45,10 @@ test("源码约束：失效账号跳过两类令牌刷新", () => {
   // 非默认且有效的账号才轮换 Codex 凭据，失效账号也跳过独立的直连凭据刷新。
   assert.match(
     refreshTokens,
-    /if !is_default \{[\s\S]*?if !record\.invalid\(\) \{\s*let expected = record\.clone\(\);\s*let proxy = [^;]+;\s*match refresh_if_stale_cached/,
+    /if !is_default \{[\s\S]*?if !record\.invalid\(\) \{\s*let expected = record\.clone\(\);\s*match refresh_if_stale/,
   );
-  assert.match(refreshTokens, /if !record\.invalid\(\) && record\.siwc\.is_some\(\) \{\s*match refresh_siwc_if_stale_with_proxy\(\s*&state\s*\.http_client\s*\.current\(crate::official_accounts::OAUTH_TOKEN_URL\)\s*\.await,\s*&store,\s*account_id,\s*Some\(&state\.official_proxied_clients\),\s*None,?\s*\)/);
-  assert.match(store, /official_http_client\(\s*client,\s*proxied_clients,\s*proxy_override\.or\(record\.upstream_proxy\.as_deref\(\)\)/);
-  const refresh = store.match(/pub async fn refresh_if_stale_cached\([\s\S]*?\n\}/)?.[0];
+  assert.match(refreshTokens, /if !record\.invalid\(\) && record\.siwc\.is_some\(\) \{\s*match refresh_siwc_if_stale\(\s*&state\s*\.http_client\s*\.current\(crate::official_accounts::OAUTH_TOKEN_URL\)\s*\.await,\s*&store,\s*account_id,?\s*\)/);
+  const refresh = store.match(/pub async fn refresh_if_stale\([\s\S]*?\n\}/)?.[0];
   assert.ok(refresh, "应存在生产使用的令牌刷新函数");
   assert.match(
     refresh,

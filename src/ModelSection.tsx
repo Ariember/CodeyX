@@ -12,7 +12,6 @@ import {
   IconFileText,
   IconGitCommit,
   IconGripVertical,
-  IconHelpCircle,
   IconInfoCircle,
   IconListDetails,
   IconPlus as Plus,
@@ -91,29 +90,6 @@ type ModelSectionProps = RouteEditorActions & {
 };
 
 type RouteModelRef = { routeId: string; model: string };
-
-const UPSTREAM_PROXY_TOOLTIP_CONTENT = (
-  <div className="space-y-1.5 text-xs text-left leading-relaxed">
-    <div className="font-semibold">上游代理格式与提示</div>
-    <div>
-      支持协议：<code className="rounded bg-[rgb(var(--codey-ink-rgb,0,0,0))]/10 px-1 py-0.5 font-mono text-[11px] dark:bg-[var(--codey-surface,#fff)]/15">http://</code>、<code className="rounded bg-[rgb(var(--codey-ink-rgb,0,0,0))]/10 px-1 py-0.5 font-mono text-[11px] dark:bg-[var(--codey-surface,#fff)]/15">https://</code>、<code className="rounded bg-[rgb(var(--codey-ink-rgb,0,0,0))]/10 px-1 py-0.5 font-mono text-[11px] dark:bg-[var(--codey-surface,#fff)]/15">socks5://</code>、<code className="rounded bg-[rgb(var(--codey-ink-rgb,0,0,0))]/10 px-1 py-0.5 font-mono text-[11px] dark:bg-[var(--codey-surface,#fff)]/15">socks5h://</code>
-    </div>
-    <div>
-      支持代理认证：允许携带用户名与密码（如 <code className="rounded bg-[rgb(var(--codey-ink-rgb,0,0,0))]/10 px-1 py-0.5 font-mono text-[11px] dark:bg-[var(--codey-surface,#fff)]/15">user:pass@host:port</code>）。
-    </div>
-    <div className="pt-0.5">
-      <div className="font-semibold text-[11px] opacity-80">常见示例：</div>
-      <div className="mt-0.5 space-y-0.5 font-mono text-[11px] opacity-90">
-        <div>http://127.0.0.1:7890</div>
-        <div>socks5://127.0.0.1:7890</div>
-        <div>http://user:pass@192.168.1.100:8080</div>
-      </div>
-    </div>
-    <div className="border-t border-current/15 pt-1 text-[11px] opacity-80">
-      留空使用系统代理；设置后该线路改用流式 HTTP 传输。
-    </div>
-  </div>
-);
 
 const routeProtocolOptions: Array<{
   label: string;
@@ -873,8 +849,8 @@ function ModelSectionComponent({
                       ? `当前官方账号：${draftOfficialAccountLabel}。未勾选的模型不会在模型目录和选择器中显示。`
                       : "未勾选的模型不会在模型目录和选择器中显示。"
                     : draftOfficialAccount
-                      ? `当前官方账号：${draftOfficialAccountLabel}。此处只调整线路名、短名称、网关地址和上游代理，模型列表请使用线路卡片上的同步按钮。`
-                      : "此处只调整线路名、短名称、网关地址和上游代理，模型列表请使用线路卡片上的同步按钮。"
+                      ? `当前官方账号：${draftOfficialAccountLabel}。此处只调整线路名、短名称和网关地址，模型列表请使用线路卡片上的同步按钮。`
+                      : "此处只调整线路名、短名称和网关地址，模型列表请使用线路卡片上的同步按钮。"
                   : "配置第三方服务的接入信息。保存后可在模型目录中同步模型。"}
               </DialogDescription>
             </DialogHeader>
@@ -996,43 +972,6 @@ function ModelSectionComponent({
                       )}
                     </label>
 
-                    <label className="route-field">
-                      <span className="route-option-title-group">
-                        <span>上游代理（可选）</span>
-                        <Tooltip content={UPSTREAM_PROXY_TOOLTIP_CONTENT}>
-                          <span
-                            className="route-option-info-trigger"
-                            aria-label="上游代理格式与提示"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                          >
-                            <IconHelpCircle size={13} />
-                          </span>
-                        </Tooltip>
-                      </span>
-                      <Input
-                        id="official-route-proxy-input"
-                        aria-label="上游代理（可选）"
-                        aria-invalid={Boolean(officialRouteDraftErrors?.upstreamProxy)}
-                        aria-describedby={
-                          officialRouteDraftErrors?.upstreamProxy
-                            ? "official-route-proxy-error"
-                            : undefined
-                        }
-                        value={officialRouteDraft?.upstreamProxy ?? routeDraft.upstreamProxy ?? ""}
-                        disabled={isBusy}
-                        placeholder="留空使用系统代理"
-                        onChange={(event) =>
-                          updateOfficialRouteDraft({ upstreamProxy: event.target.value })}
-                      />
-                      {officialRouteDraftErrors?.upstreamProxy ? (
-                        <small id="official-route-proxy-error" className="text-[var(--codey-red,#d70015)]" role="alert">
-                          {officialRouteDraftErrors.upstreamProxy}
-                        </small>
-                      ) : null}
-                    </label>
                   </>
                 )}
 
@@ -1382,48 +1321,6 @@ function ModelSectionComponent({
                   ) : null}
                 </label>
 
-                <label className="route-field">
-                  <span className="route-option-title-group">
-                    <span>上游代理（可选）</span>
-                    <Tooltip content={UPSTREAM_PROXY_TOOLTIP_CONTENT}>
-                      <span
-                        className="route-option-info-trigger"
-                        aria-label="上游代理格式与提示"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                      >
-                        <IconHelpCircle size={13} />
-                      </span>
-                    </Tooltip>
-                  </span>
-                  <Input
-                    id="route-proxy-input"
-                    aria-label="上游代理（可选）"
-                    aria-invalid={Boolean(
-                      routeDraftErrors?.upstreamProxy &&
-                      (routeValidationAttempted || (routeDraft.upstreamProxy || "").trim()),
-                    )}
-                    aria-describedby={
-                      routeDraftErrors?.upstreamProxy &&
-                      (routeValidationAttempted || (routeDraft.upstreamProxy || "").trim())
-                        ? "route-proxy-error"
-                        : undefined
-                    }
-                    value={routeDraft.upstreamProxy || ""}
-                    disabled={isBusy}
-                    placeholder="留空使用系统代理"
-                    onChange={(event) =>
-                      updateRouteDraft({ upstreamProxy: event.target.value })}
-                  />
-                  {routeDraftErrors?.upstreamProxy &&
-                  (routeValidationAttempted || (routeDraft.upstreamProxy || "").trim()) ? (
-                    <small id="route-proxy-error" className="text-[var(--codey-red,#d70015)]" role="alert">
-                      {routeDraftErrors.upstreamProxy}
-                    </small>
-                  ) : null}
-                </label>
               </div>
             )}
 

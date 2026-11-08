@@ -44,16 +44,10 @@ pub(super) async fn after_integration_failure(
     home: &Path,
     app_dir: &Path,
     local_router_enabled: bool,
-    allow_native_recovery: bool,
     error: anyhow::Error,
 ) -> anyhow::Error {
     if !error.is::<IntegrationFailure>() {
         return error;
-    }
-    if !allow_native_recovery {
-        return restore_runtime_config_after_error(home, local_router_enabled, error)
-            .await
-            .context("已配置代理，已阻止可能绕过代理的原生启动回退；请修复启动问题后重试");
     }
     let result = restore_then_launch(
         restore_runtime_config_for_router_mode(home, local_router_enabled),
@@ -281,7 +275,6 @@ mod tests {
             Path::new("missing"),
             Path::new("missing"),
             false,
-            true,
             anyhow::anyhow!("cleanup failed"),
         )
         .await;
@@ -289,24 +282,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn applied_launch_proxy_blocks_native_recovery_before_launch() {
+    async fn integration_failure_attempts_native_recovery() {
         let directory = tempfile::tempdir().unwrap();
-        let (proxy, warning) =
-            crate::launch_proxy::CodexLaunchProxy::resolve_for_start("http://127.0.0.1:1080");
-        assert!(proxy.is_some());
-        assert!(warning.is_none());
         let error = after_integration_failure(
             directory.path(),
             Path::new("nonexistent-codex"),
             false,
-            proxy.is_none(),
             recoverable("fixture startup failure"),
         )
         .await;
         let detail = format!("{error:#}");
-        assert!(detail.contains("已阻止可能绕过代理"), "{detail}");
         assert!(detail.contains("fixture startup failure"), "{detail}");
-        assert!(!detail.contains("原生启动失败"), "{detail}");
+        assert!(detail.contains("Codex 自动恢复失败"), "{detail}");
     }
 
     #[tokio::test]

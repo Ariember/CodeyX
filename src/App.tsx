@@ -21,7 +21,6 @@ import { UsageAnalysisPanel } from "./features/usage-analysis";
 import { OperationsPanel } from "./OperationsPanel";
 import { CodeyPluginsSection } from "./features/codey-plugins";
 import { BuiltinToolsPage } from "./features/builtin-tools";
-import { NetworkProxyPage } from "./features/network-proxy";
 import { BackupPage } from "./features/backup";
 import { CodexExtensionsPage } from "./features/codex-extensions";
 import { SessionsPage } from "./features/session-management";
@@ -705,8 +704,6 @@ export function App({
             />
           ),
           remote: (active) => <RemoteControlPanel active={active} />,
-          network: (active) => <NetworkProxyPage active={active && (!embedded || modalVisible)}
-            config={config} isBusy={isBusy} onConfigChange={handleConfigChange} />,
           sessions: (active) => <SessionsPage active={active} isBusy={isBusy} onRestart={handleRestartCodex} container={popupContainer} />,
           backup: (active) => <BackupPage active={active && (!embedded || modalVisible)} isBusy={isBusy}
             dirty={dirty} setBusy={setBusy} onSaved={applySavedConfig} onReload={load} container={popupContainer} />,

@@ -488,8 +488,7 @@ impl LocalRouter {
     }
 }
 
-/// 上游 HTTP 客户端的统一构造参数；默认客户端和线路代理客户端共用，
-/// 避免两者的连接与协议行为出现差异。
+/// 上游 HTTP 客户端共用连接与协议参数。
 pub(crate) fn upstream_http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
@@ -518,9 +517,6 @@ pub(crate) fn upstream_http_client_builder() -> reqwest::ClientBuilder {
 
 #[cfg(not(test))]
 pub(crate) fn outbound_proxy_applies_to_route(profile: &ProviderProfile) -> bool {
-    if !profile.upstream_proxy.trim().is_empty() {
-        return true;
-    }
     let base_url = if profile.official_account {
         crate::codex_provider::official_route_base_url(profile)
     } else {
@@ -531,9 +527,8 @@ pub(crate) fn outbound_proxy_applies_to_route(profile: &ProviderProfile) -> bool
 }
 
 #[cfg(test)]
-pub(crate) fn outbound_proxy_applies_to_route(profile: &ProviderProfile) -> bool {
-    // 测试不读系统代理，但线路级代理的行为（禁用上游 WebSocket）保持一致。
-    !profile.upstream_proxy.trim().is_empty()
+pub(crate) fn outbound_proxy_applies_to_route(_profile: &ProviderProfile) -> bool {
+    false
 }
 
 pub(crate) fn outbound_proxy_applies_to_url_with_matcher(
@@ -626,8 +621,7 @@ pub(crate) struct RouterServer {
 }
 
 impl RouterServer {
-    /// 选择线路的上游 HTTP 客户端：未配置代理的线路共用默认客户端（遵循
-    /// 系统代理），配置了上游代理的线路使用仅走该代理的专用客户端。
+    /// 上游 HTTP 客户端遵循系统代理快照。
     pub(crate) async fn upstream_client(
         &self,
         route: &RouteTarget,
@@ -635,7 +629,7 @@ impl RouterServer {
         let url = route.upstream_url.as_deref().map_err(Clone::clone)?;
         let lease = self
             .http_clients
-            .client(url, route.upstream_proxy.as_deref())
+            .client(url)
             .await
             .map_err(|message| format!("线路「{}」{message}", route.route_name))?;
         Ok(RouterUpstreamClient {
@@ -808,8 +802,6 @@ impl RouterSnapshot {
                 upstream_websocket_url: prepare_upstream_websocket_url(protocol, &base_url),
                 upstream_headers: prepare_upstream_headers(profile, protocol),
                 upstream_authority: upstream_authority(&base_url),
-                upstream_proxy: Some(profile.upstream_proxy.trim().to_string())
-                    .filter(|proxy| !proxy.is_empty()),
                 protocol,
                 official_account: profile.official_account,
                 // Each stored account reads its own credential document, so
@@ -1152,7 +1144,6 @@ pub(crate) struct RouteTarget {
     pub(crate) upstream_websocket_url: std::result::Result<String, String>,
     pub(crate) upstream_headers: std::result::Result<HeaderMap, String>,
     pub(crate) upstream_authority: String,
-    pub(crate) upstream_proxy: Option<String>,
     pub(crate) protocol: UpstreamProtocol,
     pub(crate) official_account: bool,
     pub(crate) official_auth: Option<OfficialRouteAuth>,
@@ -1248,9 +1239,6 @@ impl RouteTarget {
         // 每个官方账号使用独立的连接池身份，避免不同账号的登录态互相影响。
         if let Some(auth) = &self.official_auth {
             update_length_prefixed_digest(&mut digest, auth.account_id.as_bytes());
-        }
-        if let Some(proxy) = &self.upstream_proxy {
-            update_length_prefixed_digest(&mut digest, proxy.as_bytes());
         }
         if let Ok(url) = &self.upstream_url {
             update_length_prefixed_digest(&mut digest, url.as_bytes());

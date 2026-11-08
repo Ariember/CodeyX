@@ -373,7 +373,6 @@ pub(super) async fn spawn_windows_codex(
         SpawnedCodex {
             child: Some(child),
             process_id,
-            launch_environment_applied: true,
             startup_process: None,
             performance_status: String::new(),
             performance_detail: String::new(),
@@ -495,7 +494,6 @@ pub(super) async fn activate_windows_codex(
                 SpawnedCodex {
                     child: None,
                     process_id: Some(process_id),
-                    launch_environment_applied: environment_applied,
                     startup_process: Some(startup_process),
                     performance_status: String::new(),
                     performance_detail: String::new(),

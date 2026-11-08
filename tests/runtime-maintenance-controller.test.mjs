@@ -141,22 +141,6 @@ test("重启请求超时只查询状态，不自动重放命令", async t => {
   h.calls[0].resolve(); await h.flush(); assert.equal(h.restarts, 0); h.unmount();
 });
 
-test("重启完成显示代理警告一次，后续状态轮询不重复提示", t => {
-  installControllerWindow(t);
-  const h = fixture({ status: { running: true, restartInProgress: true } });
-  h.render();
-  const startupWarning = "代理未应用，已继续启动";
-  h.options.status = { running: true, restartInProgress: false, startupWarning };
-  h.render();
-  assert.deepEqual(h.notices, [{ tone: "info", text: startupWarning }]);
-  h.options.status = { ...h.options.status }; h.render();
-  assert.equal(h.notices.length, 1);
-  h.options.status = { running: true, restartInProgress: true }; h.render();
-  h.options.status = { running: false, startupError: "启动失败", startupWarning }; h.render();
-  assert.equal(h.notices.length, 1);
-  h.unmount();
-});
-
 test("配置修复可在配置加载失败时确认执行，结果保留路径、备份和连接失败提示", async t => {
   installControllerWindow(t); const h = fixture({ config: null });
   for (const result of [{ repaired: true, configPath: "test/config.toml", backupPath: "test/backup.toml", message: "已修复" }, { repaired: false, configPath: "test/config.toml" }, new Error("disconnected")]) {
@@ -286,18 +270,6 @@ test("注入修复仅以运行中的主进程注入标记确认成功，CLI或�
     assert.match(h.notices.at(-1).text, tone === "success" ? /已修复.*已自动重启/ : startupError ? /修复失败/ : /尚未确认/);
     assert.equal(h.render().injectionRepairRequested, false); h.unmount();
   }
-});
-
-test("注入修复成功保留本次启动的代理警告", async t => {
-  installControllerWindow(t);
-  const h = fixture({ status: fallbackStatus });
-  h.render().repairMainProcessInjection(); h.confirmation.run();
-  h.calls[0].resolve({ status: "restarting" }); await h.flush();
-  h.options.status = { running: true, restartInProgress: false, startupWarning: "代理未应用，已继续启动",
-    maintenance: { startupInjectionMode: "inspector" } };
-  h.render();
-  assert.deepEqual(h.notices.at(-1), { tone: "info", text: "主进程注入已修复，Codex 已自动重启；代理未应用，已继续启动" });
-  h.unmount();
 });
 
 test("诊断清理传递目标并保留其他运行状态，失败与隐藏不回写旧结果", async t => {

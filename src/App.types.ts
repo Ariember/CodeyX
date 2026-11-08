@@ -20,7 +20,6 @@ export type Profile = {
   apiKeyConfigured: boolean;
   clearApiKey?: boolean;
   modelRequestHeaders?: Record<string, string>;
-  upstreamProxy?: string;
   sourceProviderId?: string;
   pluginOwnerId?: string;
   /** 宿主返回的插件声明，用于模型与网络传输能力。 */
@@ -115,8 +114,6 @@ export type Config = {
   protectCrashpadPending: boolean;
   slimCodexPet: boolean;
   gpuLaunchMode: "off" | "disableGpu" | "disableGpuRasterization";
-  codexLaunchProxy: string;
-  networkProxy?: unknown;
   fastContextTools: boolean;
   subagentOptimization: boolean;
   subagentModel: string;
@@ -218,7 +215,6 @@ export type OfficialAccount = {
   lastRefresh?: string;
   routeName?: string;
   routeShortName?: string;
-  upstreamProxy?: string;
   /** 自定义 OpenAI 网关。留空时使用官方默认地址。 */
   baseUrl?: string;
   invalid?: boolean;
@@ -264,7 +260,6 @@ export type RuntimeStatus = {
   activeProfileName?: string;
   officialAccountAvailable?: boolean;
   startupError?: string;
-  startupWarning?: string | null;
   codexAppPath?: string;
   maintenance?: Maintenance;
   injectionScripts?: InjectionScriptStatus[];

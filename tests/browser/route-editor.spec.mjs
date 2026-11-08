@@ -37,6 +37,7 @@ test("线路编辑校验聚焦、保存防重和失败保留草稿，成功关�
   const route = await openRoutes(page, true);
   await page.getByLabel(`编辑线路 ${route.name}`, { exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "编辑线路", exact: true });
+  await expect(dialog.getByRole("textbox", { name: "上游代理（可选）", exact: true })).toHaveCount(0);
   const shortName = dialog.getByRole("textbox", { name: "短名称", exact: true });
   const save = dialog.getByRole("button", { name: "保存线路", exact: true });
   await shortName.fill("");

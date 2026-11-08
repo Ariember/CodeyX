@@ -370,7 +370,6 @@ async fn subagent_catalog_fallback_keeps_live_routes_and_roles_until_restart() {
         crashpad_guard_shutdown: Mutex::new(None),
         crashpad_guard_task: Mutex::new(None),
         local_router: Some(router),
-        startup_warning: None,
     };
     let original = runtime.subagent_reconcile_config(&config).unwrap();
     let model = &original.subagent_roles["codey_worker"].model;

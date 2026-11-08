@@ -196,7 +196,6 @@ pub(super) async fn invoke(
                 args,
                 "modelContexts",
             ),
-            optional_argument::<String>(args, "upstreamProxy"),
         ) {
             (
                 Ok(route_id),
@@ -205,7 +204,6 @@ pub(super) async fn invoke(
                 Ok(enabled),
                 Ok(show_usage),
                 Ok(model_contexts),
-                Ok(upstream_proxy),
             ) => {
                 match (
                     optional_argument::<String>(args, "accountId"),
@@ -222,7 +220,6 @@ pub(super) async fn invoke(
                                 model_contexts,
                                 enabled,
                                 show_account_usage: show_usage,
-                                upstream_proxy,
                                 base_url,
                                 account_id,
                                 route_name,
@@ -237,13 +234,12 @@ pub(super) async fn invoke(
                     | (_, _, _, Err(error)) => Err(error),
                 }
             }
-            (Err(error), _, _, _, _, _, _)
-            | (_, Err(error), _, _, _, _, _)
-            | (_, _, Err(error), _, _, _, _)
-            | (_, _, _, Err(error), _, _, _)
-            | (_, _, _, _, Err(error), _, _)
-            | (_, _, _, _, _, Err(error), _)
-            | (_, _, _, _, _, _, Err(error)) => Err(error),
+            (Err(error), _, _, _, _, _)
+            | (_, Err(error), _, _, _, _)
+            | (_, _, Err(error), _, _, _)
+            | (_, _, _, Err(error), _, _)
+            | (_, _, _, _, Err(error), _)
+            | (_, _, _, _, _, Err(error)) => Err(error),
         },
         _ => Err(format!("未知 Codey API 命令：{command}")),
     }

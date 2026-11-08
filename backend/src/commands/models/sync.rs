@@ -151,7 +151,7 @@ pub(crate) async fn sync_native_current_provider_models(
         )
     } else if let Some(fetch_profile) = context.fetch_profile.clone() {
         fetch_profile.validate()?;
-        let fetched_models = fetch_provider_models_with_state(state, fetch_profile)
+        let fetched_models = fetch_provider_models(fetch_profile)
             .await
             .map_err(|error| error.to_string())?;
         regular_route_models(fetched_models)
@@ -502,26 +502,7 @@ pub(crate) fn preserve_declared_official_models(
     }
 }
 
-#[cfg(test)]
 pub(crate) async fn fetch_provider_models(profile: ProviderProfile) -> anyhow::Result<Vec<String>> {
-    fetch_provider_models_with_proxy(profile, None).await
-}
-
-pub(crate) async fn fetch_provider_models_with_state(
-    state: &Arc<AppState>,
-    profile: ProviderProfile,
-) -> anyhow::Result<Vec<String>> {
-    let proxy = state
-        .proxy_for_profile(&profile)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    fetch_provider_models_with_proxy(profile, proxy.as_deref()).await
-}
-
-async fn fetch_provider_models_with_proxy(
-    profile: ProviderProfile,
-    proxy: Option<&str>,
-) -> anyhow::Result<Vec<String>> {
     // 原生传输插件的模型由配置声明，上游不一定提供标准 /models。
     if profile.plugin_owner_id.is_some()
         && let Some(spec) = profile
@@ -540,7 +521,7 @@ async fn fetch_provider_models_with_proxy(
     let client = provider_models::http_client()
         .current(&fetch_profile.normalized_base_url())
         .await;
-    provider_models::fetch_with_proxy(&fetch_profile, &client, proxy).await
+    provider_models::fetch(&fetch_profile, &client).await
 }
 
 #[cfg(test)]
@@ -599,7 +580,7 @@ pub(crate) async fn sync_provider_models_for_launch(
 
     let (models, synced) = match tokio::time::timeout(
         STARTUP_PROVIDER_MODEL_SYNC_TIMEOUT,
-        fetch_provider_models_with_state(state, profile.clone()),
+        fetch_provider_models(profile.clone()),
     )
     .await
     {

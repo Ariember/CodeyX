@@ -60,7 +60,6 @@ pub struct OfficialRouteModelSave {
     pub model_contexts: Option<BTreeMap<String, crate::config::ModelContextConfig>>,
     pub enabled: Option<bool>,
     pub show_account_usage: Option<bool>,
-    pub upstream_proxy: Option<String>,
     pub base_url: Option<String>,
     pub account_id: Option<String>,
     pub route_name: Option<String>,
@@ -77,7 +76,6 @@ pub async fn save_official_route_models(
         model_contexts: requested_model_contexts,
         enabled: requested_enabled,
         show_account_usage: requested_show_account_usage,
-        upstream_proxy: requested_upstream_proxy,
         base_url: requested_base_url,
         account_id,
         route_name,
@@ -119,13 +117,6 @@ pub async fn save_official_route_models(
     if let Some(enabled) = requested_enabled {
         config.profiles[profile_index].enabled = enabled;
     }
-    // 参数缺席表示保持现状；空字符串表示清除代理。地址合法性由配置校验把关。
-    let mut mirrored_proxy: Option<String> = None;
-    if let Some(upstream_proxy) = requested_upstream_proxy.as_deref() {
-        let upstream_proxy = upstream_proxy.trim().to_string();
-        config.profiles[profile_index].upstream_proxy = upstream_proxy.clone();
-        mirrored_proxy = Some(upstream_proxy);
-    }
     // 参数缺席表示保持现状；空字符串表示恢复官方默认网关。
     if let Some(base_url) = normalized_base_url.as_ref() {
         config.profiles[profile_index].base_url = base_url.clone().unwrap_or_default();
@@ -166,11 +157,6 @@ pub async fn save_official_route_models(
     config = config.normalize();
     config.settings_revision = config.settings_revision.saturating_add(1);
     // 账号记录是下次启动派生线路的来源，必须与主配置一起确认保存结果。
-    let route_account_id = config
-        .profiles
-        .iter()
-        .find(|profile| profile.id == route_id)
-        .and_then(|profile| profile.official_account_id.clone());
     let save_account = async {
         if let Some(account_id) = account_id {
             write_official_account_route_settings(
@@ -178,17 +164,10 @@ pub async fn save_official_route_models(
                 account_id,
                 route_name.unwrap_or_default(),
                 route_short_name.unwrap_or_default(),
-                requested_upstream_proxy.clone().unwrap_or_default(),
                 requested_base_url.clone().unwrap_or_default(),
             )
             .await
             .map(Some)
-        } else if let Some(upstream_proxy) = mirrored_proxy
-            && let Some(account_id) = route_account_id
-        {
-            persist_official_account_proxy(state, account_id, upstream_proxy)
-                .await
-                .map(|()| None)
         } else {
             Ok(None)
         }
@@ -330,34 +309,6 @@ pub(crate) fn ordered_official_selection(
         return Err("官方账号线路至少需要保留一个模型".to_string());
     }
     Ok(selected)
-}
-
-/// Keeps the official-account store in step with the proxy edited on the
-/// official route card.
-async fn persist_official_account_proxy(
-    state: &Arc<AppState>,
-    account_id: String,
-    upstream_proxy: String,
-) -> Result<(), String> {
-    let store = state.official_accounts();
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let record = store
-            .get(&account_id)?
-            .ok_or_else(|| anyhow::anyhow!("找不到官方账号：{account_id}"))?;
-        let upstream_proxy = upstream_proxy.trim();
-        let upstream_proxy = (!upstream_proxy.is_empty()).then(|| upstream_proxy.to_string());
-        store.update_route_settings(
-            &record.id,
-            record.route_name.clone(),
-            record.route_short_name.clone(),
-            upstream_proxy,
-            record.base_url.clone(),
-        )?;
-        Ok(())
-    })
-    .await
-    .map_err(|error| format!("保存官方账号线路代理任务异常退出：{error}"))?
-    .map_err(|error| format!("{error:#}"))
 }
 
 pub(crate) fn current_model_state(

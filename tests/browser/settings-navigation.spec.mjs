@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const groups = [
-  ["核心配置", ["基础功能", "线路与模型", "网络代理", "提示词优化", "子代理优化"]],
+  ["核心配置", ["基础功能", "线路与模型", "提示词优化", "子代理优化"]],
   ["运行管理", ["远程控制", "会话管理", "备份与恢复"]],
   ["扩展生态", ["内置工具", "CodeyX 插件", "MCP 管理", "Skill 管理"]],
 ];
@@ -16,7 +16,8 @@ for (const theme of ["light", "dark"]) {
       const menu = page.getByRole("navigation", { name: "配置功能菜单" });
       await expect(menu).toBeVisible({ timeout: 60_000 });
       await expect(menu.locator(".settings-nav-group-title")).toHaveText(groups.map(([title]) => title));
-      await expect(menu.locator(".settings-nav-item")).toHaveCount(12);
+      await expect(menu.locator(".settings-nav-item")).toHaveCount(11);
+      await expect(menu.getByRole("button", { name: "网络代理", exact: true })).toHaveCount(0);
       await page.screenshot({ path: testInfo.outputPath("sidebar.png") });
 
       for (const [index, [, titles]] of groups.entries()) {

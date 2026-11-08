@@ -19,7 +19,7 @@ export const routeRequests = {
     invoke<RouteResult & { routeModelState: ModelState }>("fetch_route_models", { routeId, expectedRevision }),
   saveOfficial: (settings: {
     routeId: string; models: string[]; enabled: boolean; showAccountUsageInHeader: boolean;
-    modelContexts?: Record<string, ModelContextConfig>; upstreamProxy?: string;
+    modelContexts?: Record<string, ModelContextConfig>;
     accountId?: string; routeName?: string; routeShortName?: string; baseUrl?: string;
   }) => invoke<OfficialRouteResult>("save_official_route_models", settings),
   setDefaultModel: (routeId: string, model: string) =>

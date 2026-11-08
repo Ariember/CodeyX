@@ -19,7 +19,7 @@ test("Windows startup compatibility failure cleans the process before compatible
   assert.ok(compatibleRestart > cleanupCall);
   assert.match(
     windowsSpawn.slice(compatibleRestart, compatibleRestart + 500),
-    /&runtime_arguments,\s*launch_proxy_environment\.as_deref\(\)\.unwrap_or\(&\[\]\),\s*false/,
+    /&runtime_arguments,\s*&\[\],\s*false/,
   );
   const singleInstanceCleanup = windowsSpawn.indexOf("if single_instance_exit {", cleanupCall);
   assert.ok(singleInstanceCleanup > cleanupCall && singleInstanceCleanup < compatibleRestart);
@@ -125,9 +125,9 @@ test("Windows skips the Inspector when the Electron fuse is off and retries with
   assert.ok(overrideGuard >= 0 && overrideGuard < subagentGuard && subagentGuard < degradedLaunch);
   assert.match(
     noEntryLaunch.slice(degradedLaunch, degradedLaunch + 400),
-    /runtime_arguments,\s*launch_proxy_environment\.unwrap_or\(&\[\]\),\s*false/,
+    /runtime_arguments,\s*&\[\],\s*false/,
   );
-  assert.match(windowsSpawn.slice(noEntry, launch), /subagent_gate_active,\s*launch_proxy_environment\.as_deref\(\),/);
+  assert.match(windowsSpawn.slice(noEntry, launch), /subagent_gate_active,\s*format!\(/);
   assert.match(noEntryLaunch, /performance_status = "degraded"/);
 });
 
