@@ -4,6 +4,36 @@ import { fileURLToPath } from "node:url";
 const script = name => fileURLToPath(new URL(`../../public/${name}.js`, import.meta.url));
 
 for (const theme of ["light", "dark"]) {
+  for (const [title, description, action] of [
+    ["已达到使用额度上限", "请向管理员发送请求，或等到明天。", "申请更多使用额度"],
+    ["You're out of Codex and Work usage", "Your rate limit resets tomorrow.", "Reset usage"],
+  ]) {
+    test(`${theme} 主题完整关闭 ${title}`, async ({ page }) => {
+      await page.setContent(`<html style="color-scheme:${theme}"><body>
+        <div><section id="notice">
+          <div id="copy"><h2>${title}</h2><p>${description}</p></div>
+          <div><button id="action">${action}</button></div>
+        </section><form id="composer"><textarea aria-label="提示词"></textarea></form></div>
+        <section data-turn-key="quoted"><h2>${title}</h2><p>${description}</p><button>${action}</button></section>
+      </body></html>`);
+      await page.evaluate(() => {
+        window.actionClicks = 0;
+        document.querySelector("#action").addEventListener("click", () => { window.actionClicks += 1; });
+      });
+      await page.addScriptTag({ path: script("codey-bridge") });
+      await page.addScriptTag({ path: script("quota-notice-dismiss") });
+      const close = page.getByRole("button", { name: "关闭使用额度提示", exact: true });
+      await expect(close).toHaveCount(1);
+      await expect(page.locator("#notice > [data-codey-quota-notice-close]")).toBeVisible();
+      await close.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#notice")).toBeHidden();
+      await expect(page.locator("#composer")).toBeVisible();
+      await expect(page.locator("[data-turn-key]")).toBeVisible();
+      expect(await page.evaluate(() => window.actionClicks)).toBe(0);
+    });
+  }
+
   test(`额度提示 ${theme} 主题分批扫描并支持键盘关闭`, async ({ page }) => {
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));

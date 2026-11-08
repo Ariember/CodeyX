@@ -112,6 +112,46 @@ pub(crate) fn move_tool_images_after_tool_results(messages: &mut Vec<Value>) {
     *messages = ordered;
 }
 
+/// Responses 语义里结尾的 assistant 项只表示上下文到此为止、模型应继续
+/// 生成新的回复；部分上游却把它当成续写前缀，前缀模式与函数调用互斥会
+/// 直接拒绝整条请求。这里把尾部带正文的 assistant 改成 user，丢弃只剩
+/// reasoning 的尾部；带 tool_calls 的尾部保持原样，悬挂调用交给上游
+/// 如实报错。`chat_reasoning_summaries` 与缺少明文的 assistant 按顺序
+/// 对齐，移除或改写尾部时要同步弹出。
+pub(crate) fn normalize_trailing_chat_assistant(
+    messages: &mut Vec<Value>,
+    chat_reasoning_summaries: &mut Vec<Option<String>>,
+) {
+    while let Some(last) = messages.last() {
+        if last.get("role").and_then(Value::as_str) != Some("assistant")
+            || last.get("tool_calls").is_some()
+            || last.get("function_call").is_some()
+        {
+            return;
+        }
+        let has_reasoning = last
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty());
+        if !has_reasoning {
+            chat_reasoning_summaries.pop();
+        }
+        if last
+            .get("content")
+            .is_some_and(|content| !content.is_null())
+        {
+            let object = messages
+                .last_mut()
+                .and_then(Value::as_object_mut)
+                .expect("chat message must be an object");
+            object.insert("role".to_string(), Value::String("user".to_string()));
+            object.remove("reasoning_content");
+            return;
+        }
+        messages.pop();
+    }
+}
+
 pub(crate) fn is_tool_image_message(message: &Value) -> bool {
     let Some(object) = message.as_object() else {
         return false;
@@ -240,34 +280,24 @@ pub(crate) fn append_responses_agent_message_object(
 /// 与 MESSAGE 属于助手历史。协议转换若一律写成 assistant，模型会把任务正文
 /// 当成自己先前说过的话，从而报告任务正文缺失。
 fn agent_message_carries_instruction(object: &serde_json::Map<String, Value>) -> bool {
-    let content_texts = match object.get("content") {
-        Some(Value::Array(parts)) => parts.iter().filter_map(agent_message_part_text).collect(),
-        Some(Value::String(text)) => vec![text.as_str()],
-        Some(part @ Value::Object(_)) => agent_message_part_text(part).into_iter().collect(),
-        _ => Vec::new(),
-    };
-    let texts = content_texts
-        .into_iter()
-        .chain(
-            ["message", "text"]
-                .into_iter()
-                .filter_map(|field| object.get(field).and_then(Value::as_str)),
-        )
-        .collect::<Vec<_>>();
-    // FINAL_ANSWER 只向下级返回结果，始终属于助手历史。
-    if texts
-        .iter()
-        .any(|text| has_collaboration_header(text, "FINAL_ANSWER"))
-    {
-        return false;
+    // 只用首个文本片段识别协作头，后续任务正文及备用字段不能覆盖它。
+    let header = match object.get("content") {
+        Some(Value::Array(parts)) => parts.iter().find_map(agent_message_part_text),
+        Some(Value::String(text)) => Some(text.as_str()),
+        Some(part @ Value::Object(_)) => agent_message_part_text(part),
+        _ => None,
     }
-    let new_task = texts
-        .iter()
-        .any(|text| has_collaboration_header(text, "NEW_TASK"));
+    .or_else(|| {
+        ["message", "text"]
+            .into_iter()
+            .find_map(|field| object.get(field).and_then(Value::as_str))
+    });
+    let Some(header) = header else {
+        return false;
+    };
+    let new_task = has_collaboration_header(header, "NEW_TASK");
     // MESSAGE 两个方向都会出现：上级用它补充要求，下级用它回报进度。
-    let message = texts
-        .iter()
-        .any(|text| has_collaboration_header(text, "MESSAGE"));
+    let message = has_collaboration_header(header, "MESSAGE");
     if !new_task && !message {
         return false;
     }
@@ -324,6 +354,93 @@ fn has_collaboration_header(text: &str, message_type: &str) -> bool {
             || rest.starts_with("\r\n")
             || rest.starts_with(' ')
     })
+}
+
+/// 第三方原生 Responses 不一定识别 Codex 自定义的 agent_message。
+/// 完全可读的协作消息按原方向改为标准 message；密文和未知内容保持原样。
+pub(crate) fn replay_third_party_agent_messages(body: &mut Value) -> bool {
+    match body.get_mut("input") {
+        Some(Value::Array(items)) => {
+            let mut changed = false;
+            for item in items {
+                changed |= replay_third_party_agent_message(item);
+            }
+            changed
+        }
+        Some(item @ Value::Object(_)) => replay_third_party_agent_message(item),
+        _ => false,
+    }
+}
+
+fn replay_third_party_agent_message(item: &mut Value) -> bool {
+    let Some(object) = item.as_object() else {
+        return false;
+    };
+    if object.get("type").and_then(Value::as_str) != Some("agent_message") {
+        return false;
+    }
+    let role = if agent_message_carries_instruction(object) {
+        "user"
+    } else {
+        "assistant"
+    };
+    let Some(content) = standard_agent_message_content(object, role) else {
+        return false;
+    };
+    *item = json!({"type":"message", "role":role, "content":content});
+    true
+}
+
+fn standard_agent_message_content(
+    object: &serde_json::Map<String, Value>,
+    role: &str,
+) -> Option<Value> {
+    let text_type = standard_agent_message_text_type(role);
+    match object.get("content") {
+        None | Some(Value::Null) => object
+            .get("message")
+            .and_then(Value::as_str)
+            .map(|text| json!([{"type":text_type, "text":text}])),
+        Some(Value::String(text)) => Some(json!([{"type":text_type, "text":text}])),
+        Some(Value::Array(parts)) => {
+            let parts = parts
+                .iter()
+                .map(|part| standard_agent_message_part(part, role))
+                .collect::<Option<Vec<_>>>()?;
+            (!parts.is_empty()).then_some(Value::Array(parts))
+        }
+        Some(part @ Value::Object(_)) => {
+            Some(Value::Array(vec![standard_agent_message_part(part, role)?]))
+        }
+        _ => None,
+    }
+}
+
+fn standard_agent_message_part(part: &Value, role: &str) -> Option<Value> {
+    let text = match part {
+        Value::String(text) => text.as_str(),
+        Value::Object(object)
+            if matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("input_text" | "output_text" | "text")
+            ) =>
+        {
+            object.get("text").and_then(Value::as_str)?
+        }
+        _ => return None,
+    };
+    Some(json!({
+        "type":standard_agent_message_text_type(role),
+        "text":text
+    }))
+}
+
+fn standard_agent_message_text_type(role: &str) -> &'static str {
+    if role == "user" {
+        "input_text"
+    } else {
+        "output_text"
+    }
 }
 
 pub(crate) fn append_responses_message_object(
@@ -2643,6 +2760,26 @@ fn move_ref_into_all_of(map: &mut serde_json::Map<String, Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trailing_assistant_normalization_keeps_reasoning_summaries_aligned() {
+        for reasoning in [None, Some("tail reasoning")] {
+            let mut messages = vec![
+                json!({"role":"assistant", "content":"earlier reply"}),
+                json!({"role":"user", "content":"continue"}),
+                json!({"role":"assistant", "content":"tail reply"}),
+            ];
+            let mut summaries = vec![Some("earlier summary".to_string())];
+            if let Some(reasoning) = reasoning {
+                messages[2]["reasoning_content"] = json!(reasoning);
+            } else {
+                summaries.push(Some("tail summary".to_string()));
+            }
+            normalize_trailing_chat_assistant(&mut messages, &mut summaries);
+            assert_eq!(messages[2], json!({"role":"user", "content":"tail reply"}));
+            assert_eq!(summaries, vec![Some("earlier summary".to_string())]);
+        }
+    }
 
     #[test]
     fn namespace_descriptions_survive_chat_and_anthropic_conversion_and_dedup() {
