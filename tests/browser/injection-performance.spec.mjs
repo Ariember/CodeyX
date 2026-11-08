@@ -5,6 +5,51 @@ const sources = ["codey-bridge.js", "codex-runtime-adapter.js", "codey-inject.js
   readFileSync(new URL(`../../public/${name}`, import.meta.url), "utf8")
 ));
 
+test("菜单和侧栏变化不触发 Git 状态查询，导航和工具栏重挂仍生效", async ({ page }) => {
+  await page.setContent('<aside data-app-action-sidebar-section></aside><main><div id="toolbar"><button id="anchor">发送</button></div></main>');
+  await page.evaluate(() => {
+    const fixture = window.fixture = { sessionId: "session-a", contextReads: 0, statusCalls: [] };
+    window.__codeyPromptOptimize = { composerContext: () => {
+      fixture.contextReads += 1;
+      return { sessionId: fixture.sessionId, target: {
+        host: document.getElementById("toolbar"), anchor: document.getElementById("anchor"),
+      } };
+    } };
+    window.__codexSessionDeleteBridge = async path => {
+      if (path === "/settings/get") return { conversationGit: { enabled: true } };
+      fixture.statusCalls.push(fixture.sessionId);
+      return { visible: true };
+    };
+  });
+  for (const name of ["codey-bridge", "conversation-git"]) {
+    await page.addScriptTag({ content: readFileSync(new URL(`../../public/${name}.js`, import.meta.url), "utf8") });
+  }
+  const button = page.locator("#codey-conversation-git");
+  await expect(button).toBeVisible();
+  // Let the initial mounting frame and its own mutation records finish.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const result = await page.evaluate(async () => {
+    const fixture = window.fixture;
+    fixture.contextReads = 0;
+    const before = fixture.statusCalls.length;
+    const menu = document.createElement("div"); menu.setAttribute("role", "menu"); document.body.append(menu);
+    for (let index = 0; index < 40; index += 1) {
+      menu.replaceChildren(document.createElement("button"));
+      document.querySelector("aside").replaceChildren(document.createElement("span"));
+      await new Promise(requestAnimationFrame);
+    }
+    return { contextReads: fixture.contextReads, statusCalls: fixture.statusCalls.length - before };
+  });
+  expect(result).toEqual({ contextReads: 0, statusCalls: 0 });
+  await page.evaluate(() => {
+    window.fixture.sessionId = "session-b";
+    document.getElementById("toolbar").setAttribute("data-above-composer-conversation-id", "session-b");
+  });
+  await expect.poll(() => page.evaluate(() => window.fixture.statusCalls.at(-1))).toBe("session-b");
+  await button.evaluate(element => element.remove());
+  await expect(button).toBeVisible();
+});
+
 test("共享观察器调整订阅时保留待派发变更，最后退订后停止观察", async ({ page }) => {
   await page.setContent('<main><div id="composer"></div></main>');
   await page.addScriptTag({ content: sources[0] });

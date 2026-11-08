@@ -1237,14 +1237,16 @@
     if (panel && !busy && !panel.contains(event.target) && !button.contains(event.target)) close();
   });
   const mutationHandler = (mutations) => {
-    const ownNode = (node) => node?.id === id || node?.id === `${id}-panel` || node?.closest?.(`#${id}, #${id}-panel`);
+    // Menus and sidebar rows cannot replace the composer or its conversation ID.
+    const ignoredNode = (node) => node?.id === id || node?.id === `${id}-panel`
+      || node?.closest?.(`#${id}, #${id}-panel, [data-app-action-sidebar-section], [role='menu'], [role='listbox']`);
     if (mutations.some((mutation) => {
-      if (ownNode(mutation.target)) return false;
+      if (ignoredNode(mutation.target)) return false;
       if (!button.isConnected && [...(mutation.removedNodes || [])].includes(button)) return true;
       const turn = mutation.target?.closest?.("[data-turn-key]");
       if (mutation.type === "childList" && turn && turn.isConnected !== false) return false;
       const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
-      return !nodes.length || nodes.some((node) => !ownNode(node));
+      return !nodes.length || nodes.some((node) => !ignoredNode(node));
     })) scheduleInFrame();
   };
   const options = { childList: true, subtree: true, attributes: true, attributeFilter: ["data-above-composer-conversation-id"] };

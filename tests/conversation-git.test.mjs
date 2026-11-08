@@ -487,6 +487,29 @@ test("does not inspect the composer for mutations while disabled", async () => {
   assert.equal(contextReads, 0);
 });
 
+test("menu and sidebar updates do not read composer layout or query Git status", async () => {
+  const env = harness(); await env.load();
+  let contextReads = 0;
+  const composerContext = env.window.__codeyPromptOptimize.composerContext;
+  env.window.__codeyPromptOptimize.composerContext = () => { contextReads += 1; return composerContext(); };
+  const statusCalls = () => env.calls.filter((call) => call.path.endsWith("_status")).length;
+  const before = statusCalls();
+  for (const attributes of [{ role: "menu" }, { role: "listbox" }, { "data-app-action-sidebar-section": "" }]) {
+    const root = env.document.createElement("div");
+    for (const [name, value] of Object.entries(attributes)) root.setAttribute(name, value);
+    env.document.body.appendChild(root);
+    env.mutate([{ type: "childList", target: env.document.body, addedNodes: [root] }]);
+    const child = env.document.createElement("button"); root.appendChild(child);
+    env.mutate([{ type: "childList", target: root, addedNodes: [child] }]);
+    env.mutate([{ type: "childList", target: child, addedNodes: [] }]);
+    await env.runTimers();
+  }
+  assert.equal(contextReads, 0);
+  assert.equal(statusCalls(), before);
+  await env.tick();
+  assert.equal(statusCalls(), before + 1, "periodic refresh still observes new file edits");
+});
+
 test("resumes the current conversation check after an old preview finishes", async () => {
   const pending = deferred();
   const env = harness({ preview: () => pending.promise }); await env.load();
