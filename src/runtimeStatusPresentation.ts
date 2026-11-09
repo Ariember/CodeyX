@@ -34,6 +34,7 @@ type OptimizationRuntimeStatus = Pick<
 >;
 
 type InjectionStatusSummary = {
+  attentionInjectionScripts: InjectionScriptStatus[];
   failedInjectionScriptCount: number;
   internalInjectionError: boolean;
   internalInjectionPending: boolean;
@@ -142,6 +143,7 @@ export function buildEnabledOptimizationFeatures(
 export function summarizeInjectionScripts(
   injectionScripts: readonly InjectionScriptStatus[],
 ): InjectionStatusSummary {
+  const attentionInjectionScripts: InjectionScriptStatus[] = [];
   let failedInjectionScriptCount = 0;
   let internalInjectionError = false;
   let internalInjectionPending = false;
@@ -150,6 +152,7 @@ export function summarizeInjectionScripts(
   for (const script of injectionScripts) {
     const failedOrUnknown =
       script.status === "failed" || script.status === "unknown";
+    if (failedOrUnknown || script.status === "executed") attentionInjectionScripts.push(script);
     if (script.visibility === "internal") {
       internalInjectionPending ||= script.status === "executed";
       internalInjectionError ||= failedOrUnknown;
@@ -161,6 +164,7 @@ export function summarizeInjectionScripts(
   }
 
   return {
+    attentionInjectionScripts,
     failedInjectionScriptCount,
     internalInjectionError,
     internalInjectionPending,

@@ -200,6 +200,7 @@ function OperationsPanelComponent({
     ],
   );
   const {
+    attentionInjectionScripts,
     failedInjectionScriptCount,
     internalInjectionError,
     internalInjectionPending,
@@ -337,13 +338,13 @@ function OperationsPanelComponent({
     {
       title: "系统优化",
       description: internalInjectionError
-        ? "基础组件运行异常，已确认生效的功能仍列于下方。"
+        ? "基础组件运行异常，展开诊断可查看具体原因。"
         : failedInjectionScriptCount > 0
-        ? `${failedInjectionScriptCount} 个脚本注入异常，下方仅列出已确认生效的功能。`
+        ? `${failedInjectionScriptCount} 个脚本注入异常，展开诊断可查看具体原因。`
         : internalInjectionPending
-          ? "基础组件状态确认中，已生效功能会自动更新。"
+          ? "基础组件状态确认中，展开诊断可查看具体项目。"
           : unverifiedInjectionScriptCount > 0
-            ? `${unverifiedInjectionScriptCount} 个功能尚待确认，下方仅列出已确认生效的功能。`
+            ? `${unverifiedInjectionScriptCount} 个功能尚待确认，展开诊断可查看具体功能和原因。`
             : injectionStatusPending
               ? status.running
                 ? "正在读取最近一次功能生效结果。"
@@ -570,6 +571,36 @@ function OperationsPanelComponent({
                           {computerUsePreparing && <LoaderCircle className="animate-spin" aria-hidden="true" />}
                           {computerUsePreparing ? "准备中" : computerUse.ready ? "重新准备" : "准备桌面插件"}
                         </Button>
+                      </div>
+                    </section>
+                  )}
+
+                  {expandedStatusCard.showInjectionScripts && attentionInjectionScripts.length > 0 && (
+                    <section className="injection-status-section" aria-labelledby="injection-attention-title">
+                      <div className="injection-status-header">
+                        <h4 id="injection-attention-title">待确认与异常</h4>
+                      </div>
+                      <div className="injection-status-list" role="list">
+                        {attentionInjectionScripts.map((script) => (
+                          <div key={script.id} className="injection-status-row injection-status-row-attention" role="listitem">
+                            <Badge variant={script.status === "executed" ? "warning" : "destructive"}>
+                              {script.status === "executed" ? "待确认" : script.status === "unknown" ? "未知" : "异常"}
+                            </Badge>
+                            <div className="injection-script-copy">
+                              <div className="injection-script-title">
+                                <span>{script.name}</span>
+                                <span className="injection-script-source">
+                                  {script.source === "user" ? "用户脚本" : "内置"}
+                                </span>
+                              </div>
+                              <span className="injection-script-detail">
+                                {script.error || script.detail || (script.status === "executed"
+                                  ? "脚本已执行，等待生效探测。"
+                                  : "尚未确认运行效果，请重新查询状态。")}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </section>
                   )}

@@ -381,6 +381,10 @@
   color: var(--codey-green, #248a3d);
 }
 
+.injection-status-row-attention {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
 .injection-script-copy {
   min-width: 0;
 }

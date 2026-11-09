@@ -54,3 +54,44 @@ for (const outcome of ["success", "error"]) {
     expect(await page.evaluate(() => window.runtimeStatusBehavior.requests.length)).toBe(2);
   });
 }
+
+for (const [theme, width] of [["light", 1280], ["dark", 360]]) {
+  test(`系统优化诊断列出待确认、异常和基础组件：${theme} / ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/codey/tests/ui-browser.html?platform=windows&theme=${theme}`);
+    await expect(page.getByRole("button", { name: "已保存", exact: true })).toBeVisible({ timeout: 60_000 });
+    await page.evaluate(() => {
+      const bridge = window.__codexSessionDeleteBridge;
+      window.__codexSessionDeleteBridge = async (path, args) => {
+        const result = await bridge(path, args);
+        return path.endsWith("/runtime_status") ? {
+          ...result,
+          injectionScripts: [
+            { id: "runtime-optimizations", name: "运行时资源优化", source: "builtin", visibility: "feature", status: "executed", detail: "脚本已执行，但生效探针尚未通过" },
+            { id: "user-failed", name: "自定义功能", source: "user", visibility: "feature", status: "failed", error: "测试：脚本执行失败" },
+            { id: "internal-unknown", name: "基础组件探测", source: "builtin", visibility: "internal", status: "unknown" },
+            { id: "pet-control-shield", name: "宠物控制精简", source: "builtin", visibility: "feature", status: "effective" },
+            { id: "inactive", name: "已关闭功能", source: "builtin", visibility: "feature", status: "inactive" },
+          ],
+        } : result;
+      };
+      window.dispatchEvent(new Event("codey-injection-status-changed"));
+    });
+    const card = page.getByRole("button", { name: /^系统优化（基础异常/ });
+    await expect(card).toBeVisible();
+    await card.click();
+    const attention = page.getByRole("region", { name: "待确认与异常", exact: true });
+    await expect(attention.getByRole("listitem")).toHaveCount(3);
+    await expect(attention).toContainText("运行时资源优化");
+    await expect(attention).toContainText("待确认");
+    await expect(attention).toContainText("脚本已执行，但生效探针尚未通过");
+    await expect(attention).toContainText("测试：脚本执行失败");
+    await expect(attention).toContainText("基础组件探测");
+    await expect(attention).toContainText("未知");
+    await expect(attention).not.toContainText("宠物控制精简");
+    await expect(attention).not.toContainText("已关闭功能");
+    await expect(page.getByRole("region", { name: /^已生效.*功能/ })).toContainText("宠物控制精简");
+    await attention.screenshot({ path: testInfo.outputPath("injection-attention.png") });
+    expect(await attention.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  });
+}

@@ -184,6 +184,13 @@ test("injection status summary separates internal failures from feature verifica
   ]);
 
   assert.deepEqual(summary, {
+    attentionInjectionScripts: [
+      { id: "internal-pending", name: "内部等待", source: "builtin", visibility: "internal", status: "executed" },
+      { id: "internal-failed", name: "内部失败", source: "builtin", visibility: "internal", status: "unknown" },
+      { id: "feature-pending", name: "功能等待", source: "builtin", visibility: "feature", status: "executed" },
+      { id: "feature-failed", name: "功能失败", source: "builtin", visibility: "feature", status: "failed" },
+      { id: "feature-unknown", name: "功能未知", source: "user", visibility: "feature", status: "unknown" },
+    ],
     failedInjectionScriptCount: 2,
     internalInjectionError: true,
     internalInjectionPending: true,

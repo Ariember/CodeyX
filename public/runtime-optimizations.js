@@ -1,7 +1,7 @@
 // CLI-only launches cannot install the main-process startup patch. Operate on
 // the native shared instances instead; keep application and voice RPCs intact.
 (() => {
-  const version = 3;
+  const version = 4;
   const slimPet = ["__CODEY_SLIM_PET__"][0] === "true";
   const previous = window.__codeyRuntimeOptimizations;
   if (previous?.version === version && previous.slimPet === slimPet && previous.isActive?.()) return;
@@ -183,21 +183,34 @@
     && /codex-message-from-view/.test(Function.prototype.toString.call(value.postMessage));
 
   const discover = async () => {
-    const urls = await window.__codeyNativeRuntime?.discoverAppAssetUrls?.() || [];
+    const urls = new Set(await window.__codeyNativeRuntime?.discoverAppAssetUrls?.() || []);
+    // Rspack exposes its module cache from the already loaded numeric entry.
+    for (const script of document?.scripts || []) {
+      if (/\/assets\/\d+\.[\w-]+\.js(?:\?[^#]*)?$/.test(script.src)) urls.add(script.src);
+    }
     if (disposed) return;
     const trackerCandidates = new Set();
     const messengerCandidates = new Set();
     for (const url of urls) {
-      // app-shared is already required by the native app. Never import pet,
-      // settings or other lazy routes just to optimize them.
-      if (!/\/app-shared-[^/?#]+\.js(?:\?[^#]*)?$/.test(url)) continue;
+      // Only inspect shared modules or entries already loaded by the native app.
+      if (!/\/(?:app-shared-[^/?#]+|\d+\.[\w-]+)\.js(?:\?[^#]*)?$/.test(url)) continue;
       try {
         const module = typeof window.__codeyImportCodexAsset === "function"
           ? await window.__codeyImportCodexAsset(url) : await import(url);
         if (disposed) return;
-        for (const value of Object.values(module)) {
-          if (matchesTracker(value)) trackerCandidates.add(value);
-          if (matchesMessenger(value)) messengerCandidates.add(value);
+        const cache = module.__webpack_require__?.c;
+        const exports = cache
+          ? Object.values(cache).filter(entry => !entry.error).map(entry => entry.exports)
+          : [module];
+        for (const exported of exports) {
+          // Rspack's ESM exports are non-enumerable getters.
+          for (const key of Object.getOwnPropertyNames(exported || {})) {
+            try {
+              const value = exported[key];
+              if (matchesTracker(value)) trackerCandidates.add(value);
+              if (matchesMessenger(value)) messengerCandidates.add(value);
+            } catch { /* A partially initialized export can be retried later. */ }
+          }
         }
       } catch { /* Unknown native shapes are left untouched. */ }
     }

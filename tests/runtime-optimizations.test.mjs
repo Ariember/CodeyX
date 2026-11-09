@@ -77,6 +77,43 @@ test("pet slimming changes only automatic prewarm and preserves caller objects a
   assert.equal(f.window.__codeyRuntimeOptimizations.snapshot().suppressedPrewarms, 1);
 });
 
+test("Rspack entry discovers cached non-enumerable exports without executing lazy modules", async () => {
+  const f = fixture({ module: {} });
+  f.window.__codeyRuntimeOptimizations.dispose();
+  const entry = "app://-/assets/348410.4b841496e2.js";
+  const imported = [];
+  const messengerExports = Object.defineProperty({}, "F", { get: () => f.messenger });
+  const trackerExports = Object.defineProperties({}, {
+    y: { get: () => f.tracker },
+    pending: { get: () => { throw new ReferenceError("not initialized"); } },
+  });
+  const require = () => { assert.fail("must not execute native modules"); };
+  require.c = {
+    messenger: { exports: messengerExports },
+    tracker: { exports: trackerExports },
+    failed: { error: new Error("native module failed"), exports: { other: { ...f.messenger } } },
+  };
+  f.window.document = { scripts: [{ src: entry }], addEventListener() {}, removeEventListener() {} };
+  f.window.__codeyNativeRuntime.discoverAppAssetUrls = async () => [];
+  f.window.__codeyImportCodexAsset = async url => {
+    imported.push(url);
+    return { __webpack_require__: require };
+  };
+  f.install();
+  await f.window.__codeyRuntimeOptimizations.refresh();
+  assert.deepEqual(imported, [entry]);
+  const status = f.window.__codeyRuntimeOptimizations.snapshot();
+  for (const key of ["cpuSamplingDisabled", "interactionHeartbeatDisabled", "appStateHeartbeatDisabled", "petPrewarmDisabled"]) {
+    assert.equal(status[key], true, key);
+  }
+  const voice = { type: "realtime-start", shouldPrewarmAvatarOverlay: true };
+  f.messenger.postMessage(voice);
+  assert.equal(f.messages.at(-1)[1], voice);
+  f.messenger.postMessage({ type: "electron-avatar-overlay-restore-ready", shouldPrewarmAvatarOverlay: true });
+  assert.equal(f.messages.at(-1)[1].shouldPrewarmAvatarOverlay, false);
+  f.window.__codeyRuntimeOptimizations.dispose();
+});
+
 test("disabled pet policy leaves prewarm untouched and reinstalls cleanly when toggled", async () => {
   const f = fixture({ slimPet: false });
   const original = f.messenger.postMessage;
