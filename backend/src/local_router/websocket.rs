@@ -518,6 +518,9 @@ impl WebSocketResponsesDownstream {
         }
         normalize_native_responses_context(body, discard_opaque_reasoning);
         if !route.official_account {
+            if !is_compaction_request(body, ResponsesRequestKind::Create) {
+                rehydrate_native_tool_manifest(body);
+            }
             replay_third_party_agent_messages(body);
         }
         if route.official_account {

@@ -3,10 +3,33 @@ import { fileURLToPath } from "node:url";
 
 const script = name => fileURLToPath(new URL(`../../public/${name}.js`, import.meta.url));
 
+test("额度提示识别原生组件状态并保留相邻目标横幅", async ({ page }) => {
+  await page.setContent(`<main><div>
+    <section id="goal"><p>Paused goal</p><button>Reset usage</button></section>
+    <aside id="shell"><section id="notice"><h2>利用上限に達しました</h2><p>23:09 にリセットされます。</p><button id="reset">リセット</button></section></aside>
+    <form id="composer"><textarea></textarea></form>
+  </div></main>`);
+  await page.evaluate(() => {
+    document.querySelector("#notice").__reactProps$quota = {
+      isOutOfUsage: true, resetsAt: 100, onResetUsage() {},
+    };
+    document.querySelector("#reset").__reactProps$quota = { onResetUsage() {} };
+  });
+  await page.addScriptTag({ path: script("codey-bridge") });
+  await page.addScriptTag({ path: script("quota-notice-dismiss") });
+  const close = page.getByRole("button", { name: "关闭使用额度提示", exact: true });
+  await expect(close).toHaveCount(1);
+  await close.click();
+  await expect(page.locator("#shell")).toBeHidden();
+  await expect(page.locator("#goal")).toBeVisible();
+  await expect(page.locator("#composer")).toBeVisible();
+});
+
 for (const theme of ["light", "dark"]) {
   for (const [title, description, action] of [
     ["已达到使用额度上限", "请向管理员发送请求，或等到明天。", "申请更多使用额度"],
     ["You're out of Codex and Work usage", "Your rate limit resets tomorrow.", "Reset usage"],
+    ["You’re out of Codex and Work usage", "Your rate limit resets tomorrow.", "✦ Upgrade"],
   ]) {
     test(`${theme} 主题完整关闭 ${title}`, async ({ page }) => {
       await page.setContent(`<html style="color-scheme:${theme}"><body>

@@ -716,7 +716,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   assert.match(css, /#codey-account-usage:hover \.codey-usage-details, #codey-account-usage:focus-visible \.codey-usage-details \{[^}]*visibility: visible;/);
   assert.match(css, /\.codey-usage-details \{[^}]*background: var\(--codey-usage-surface\);[^}]*pointer-events: none;/);
   assert.match(css, /\[data-dismissed="true"\] \.codey-usage-details \{[^}]*visibility: hidden;/);
-  assert.match(css, /\[data-state="stale"\] \.codey-usage-stale-note \{ display: block; \}/);
+  assert.match(css, /\[data-codey-state="stale"\] \.codey-usage-stale-note \{ display: block; \}/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*#codey-account-usage \*/);
   assert.equal(usage.parentElement, sidebarFooterHost);
   assert.equal(usage.nextElementSibling, nativeProfileFooter);
@@ -750,7 +750,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   assert.doesNotMatch(details.innerHTML, /data-expiring/);
   assert.match(details.innerHTML, /更新于 \d{2}:\d{2}/);
   assert.doesNotMatch(details.innerHTML, /class="codey-usage-pace"|codey-usage-legend|--codey-usage-time-left/);
-  assert.equal(usage.dataset.state, "ready");
+  assert.equal(usage.dataset.codeyState, "ready");
   assert.equal(usage.dataset.windowCount, "2");
   assert.equal(usage.dataset.plan, undefined);
   assert.equal(usage.getAttribute("tabindex"), "0");
@@ -807,7 +807,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   appServerUsageResult.rateLimits.primary.resetsAt = Math.floor(Date.now() / 1000) + 29.5 * 60 * 60;
   await window.__codeyRefreshAccountUsage();
   assert.equal(appServerUsageCalls, 1);
-  assert.equal(usage.dataset.state, "ready");
+  assert.equal(usage.dataset.codeyState, "ready");
   assert.equal(usage.dataset.windowCount, "1");
   assert.match(summary.innerHTML, /每周[\s\S]*?80%/);
   assert.doesNotMatch(summary.innerHTML, /data-window="five-hour"/);
@@ -826,7 +826,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   await window.__codeyRefreshAccountUsage();
   window.__codeyRendererScan();
   assert.equal(appServerUsageCalls, 2);
-  assert.equal(usage.dataset.state, "stale");
+  assert.equal(usage.dataset.codeyState, "stale");
   assert.match(summary.innerHTML, /data-tone="warning">\s*<span class="codey-usage-status">未能刷新 · 截至 \d{2}:\d{2} · 重置次数即将过期<\/span>/);
   assert.match(summary.innerHTML, /每周[\s\S]*?80%/);
   assert.match(details.innerHTML, /未能刷新 · 截至 \d{2}:\d{2}/);
@@ -862,7 +862,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   assert.equal(appServerUsageCalls, 2);
   assert.equal(remountedUsage.parentElement, sidebarFooterHost);
   assert.equal(remountedUsage.nextElementSibling, nativeProfileFooter);
-  assert.equal(remountedUsage.dataset.state, "ready");
+  assert.equal(remountedUsage.dataset.codeyState, "ready");
   const remounted = accountUsageParts(remountedUsage);
   assert.match(remounted.summary.innerHTML, /class="codey-usage-plan">Plus<\/span>[\s\S]*?每周/);
   assert.doesNotMatch(remounted.summary.innerHTML, /data-window="five-hour"/);
@@ -878,7 +878,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
   await window.__codeyRefreshAccountUsage();
   const errorUsage = findById("codey-account-usage");
   assert.ok(errorUsage);
-  assert.equal(errorUsage.dataset.state, "error");
+  assert.equal(errorUsage.dataset.codeyState, "error");
   assert.equal(errorUsage.dataset.windowCount, undefined);
   assert.equal(errorUsage.getAttribute("aria-label"), "官方账号额度暂不可用");
   const errorParts = accountUsageParts(errorUsage);
@@ -897,7 +897,7 @@ test("renders weekly and optional five-hour usage above the sidebar account", as
     credits: { hasCredits: false, unlimited: false, balance: "0" },
   };
   await window.__codeyRefreshAccountUsage();
-  assert.equal(errorUsage.dataset.state, "ready");
+  assert.equal(errorUsage.dataset.codeyState, "ready");
   assert.match(errorParts.summary.innerHTML, /data-tone="critical">\s*<span class="codey-usage-status">5 小时额度已用完<\/span>/);
   assert.match(errorParts.summary.innerHTML, /data-window="five-hour" data-tone="critical" data-pace="empty"[\s\S]*?0%[\s\S]*?<span class="codey-usage-reset">1 小时 38 分钟后恢复<\/span>/);
   assert.match(errorParts.summary.innerHTML, /data-window="weekly" data-tone="warning" data-pace="fast"[\s\S]*?26%[\s\S]*?<span class="codey-usage-reset">4 天后重置<\/span>/);

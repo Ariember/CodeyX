@@ -2,7 +2,7 @@
 // /session/stats 返回统计范围；会话 id 取自可见 composer，隐藏会话不参与。
 (() => {
   const PROBE_KEY = "__codeyConversationStats";
-  const VERSION = 13;
+  const VERSION = 14;
   const previous = window[PROBE_KEY];
   if (previous?.installed && (previous.version === VERSION || !previous.dispose)) return;
   previous?.dispose?.();
@@ -149,7 +149,7 @@
       ${styleScope} .codey-cs-groups { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 10px; }
       ${styleScope} button { font: inherit; color: inherit; cursor: pointer; }
       ${styleScope} .codey-cs-summary { display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; padding: 4px 9px; border: 0; border-radius: 999px; background: transparent; color: var(--cs-muted); text-align: center; }
-      ${styleScope} .codey-cs-summary:hover, ${styleScope} .codey-cs-summary[aria-expanded="true"] { background: color-mix(in srgb, var(--cs-text) 5%, transparent); color: color-mix(in srgb, var(--cs-text) 72%, transparent); }
+      ${styleScope} .codey-cs-summary:hover, ${styleScope} .codey-cs-summary[data-codey-expanded="true"] { background: color-mix(in srgb, var(--cs-text) 5%, transparent); color: color-mix(in srgb, var(--cs-text) 72%, transparent); }
       ${styleScope} button:focus-visible { outline: 2px solid var(--cs-text); outline-offset: 2px; }
       ${styleScope} .codey-cs-icon { display: inline-block; width: 15px; height: 15px; flex: 0 0 15px; background: currentColor; mask: var(--cs-icon) center / contain no-repeat; }
       ${styleScope} .codey-cs-metric { white-space: nowrap; }
@@ -209,7 +209,7 @@
       ]) {
         const button = make("button", `codey-cs-summary codey-cs-${kind}-summary`, "", groups);
         button.type = "button";
-        button.setAttribute("aria-expanded", "false");
+        button.setAttribute("data-codey-expanded", "false");
         button.setAttribute("aria-controls", `${barId}-${kind}`);
         icon(kind, button);
         if (kind === "activity") {
@@ -229,7 +229,13 @@
         const panel = make("section", "codey-cs-details", "", overlay);
         panel.id = `${barId}-${kind}`;
         panel.hidden = true;
-        if (typeof panel.showPopover === "function") panel.setAttribute("popover", "manual");
+        if (typeof panel.showPopover === "function") {
+          panel.setAttribute("popover", "manual");
+          // 原生关联提供展开状态，避免宿主 :has([aria-expanded="true"]) 触发整页样式重算。
+          button.popoverTargetElement = panel;
+        } else {
+          button.setAttribute("aria-expanded", "false");
+        }
         panel.setAttribute("aria-label", title);
         const heading = make("div", "codey-cs-heading", "", panel);
         icon(kind, heading);
@@ -261,7 +267,8 @@
         button.addEventListener("blur", (event) => { if (!panel.contains(event.relatedTarget)) leave(); });
         panel.addEventListener("pointerenter", () => clearTimeout(refs.closeTimer));
         panel.addEventListener("pointerleave", leave);
-        button.addEventListener("click", () => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
           const close = refs.active === kind && refs.pinned;
           setExpanded(!close, false, kind);
           refs.pinned = !close;
@@ -350,7 +357,8 @@
       if (visible && panel.hasAttribute("popover") && !panel.matches(":popover-open")) {
         try { panel.showPopover(); } catch { panel.removeAttribute("popover"); }
       }
-      setAttribute(refs.buttons[key], "aria-expanded", String(visible));
+      setAttribute(refs.buttons[key], "data-codey-expanded", String(visible));
+      if (!panel.hasAttribute("popover")) setAttribute(refs.buttons[key], "aria-expanded", String(visible));
     }
     if (expanded) positionPanel();
     else if (restoreFocus) {
@@ -492,7 +500,7 @@
     setAttribute(refs.buttons.activity, "aria-label", `会话总轮数 ${count(data.turnCount)} 轮，最近一轮统计 ${count(turn?.stepCount)} 步，本轮平均速度 ${speedText}，${status}。${speedNote}。查看统计详情`);
     setAttribute(refs.buttons.tokens, "aria-label", `Token 用量，${scopeLabel} ${refs.total.textContent}，缓存命中 ${rate}，${status}。查看统计详情`);
     setValue(bar.dataset, "running", running ? "true" : "false");
-    setValue(bar.dataset, "state", state);
+    setValue(bar.dataset, "codeyState", state);
     positionPanel();
   };
 

@@ -3,6 +3,39 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("../../public/conversation-stats-inject.js", import.meta.url));
 
+test("统计浮层使用原生展开状态并避开宿主通用状态选择器", async ({ page }) => {
+  await page.setContent(`<style>
+    body:has([aria-expanded="true"]), body:has([data-state="stale"]) { --host-state: changed; }
+  </style><main style="position:fixed;bottom:24px;left:24px;right:24px"><div data-above-composer-conversation-id="conversation-1"></div><textarea></textarea></main>`);
+  await page.evaluate(() => {
+    window.__codexSessionDeleteBridge = async () => ({ status: "ok", stats: { totalTokens: 100 } });
+  });
+  await page.addScriptTag({ path: script });
+  const trigger = page.locator(".codey-cs-activity-summary");
+  const panel = page.getByRole("region", { name: "最近一轮统计", exact: true });
+  const client = await page.context().newCDPSession(page);
+  const expanded = async () => {
+    const { nodes } = await client.send("Accessibility.getFullAXTree");
+    const button = nodes.find(node => node.role?.value === "button" && node.name?.value.includes("最近一轮统计"));
+    return button?.properties.find(property => property.name === "expanded")?.value.value;
+  };
+  try {
+    await expect(trigger).toBeVisible();
+    await expect.poll(expanded).toBe(false);
+    await trigger.click();
+    await expect(panel).toBeVisible();
+    await expect.poll(expanded).toBe(true);
+    await expect(trigger).not.toHaveAttribute("aria-expanded");
+    expect(await page.evaluate(() => getComputedStyle(document.body).getPropertyValue("--host-state"))).toBe("");
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect.poll(expanded).toBe(false);
+    await expect(trigger).toBeFocused();
+  } finally {
+    await client.detach();
+  }
+});
+
 test("统计浮层放大窗口后仍贴近入口，滚动缩放合并到一帧并可清理", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 360 });
   await page.setContent(`<main style="position:fixed;bottom:24px;left:24px;right:24px">

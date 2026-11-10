@@ -240,7 +240,7 @@ const metric = (bar, name) => name === "status" ? bar.dataset.status : bar.query
 const field = (bar, name) => bar.__codeyCs.fields[name].textContent;
 const summary = (env) => env.bar().querySelector("button.codey-cs-summary");
 const panel = (env) => env.document.getElementById("codey-conversation-stats-activity");
-const click = (element) => element.dispatchEvent({ type: "click" });
+const click = (element) => element.dispatchEvent({ type: "click", preventDefault() {} });
 const assertExpanded = (env, expanded) => {
   assert.equal(summary(env).getAttribute("aria-expanded"), String(expanded));
   assert.equal(panel(env).hidden, !expanded);
@@ -974,6 +974,9 @@ test("native popovers switch and close together with their triggers", async () =
   await flushTimers(30);
   click(summary(env));
   assert.equal(panel(env).popoverOpen, true);
+  assert.equal(summary(env).getAttribute("aria-expanded"), null);
+  assert.equal(summary(env).getAttribute("data-codey-expanded"), "true");
+  assert.equal(summary(env).popoverTargetElement, panel(env));
   const tokens = env.bar().__codeyCs.panels.tokens;
   click(env.bar().__codeyCs.buttons.tokens);
   assert.equal(panel(env).popoverOpen, false);
@@ -1147,7 +1150,7 @@ test("uses only the reported session turn count and preserves zero independently
     await flushTimers(30);
     assert.equal(metric(env.bar(), "activity"), "0 轮 · — 步");
     assert.equal(metric(env.bar(), "speed"), "—");
-    assert.notEqual(env.bar().dataset.state, "empty");
+    assert.notEqual(env.bar().dataset.codeyState, "empty");
   } finally {
     env.dispose();
   }

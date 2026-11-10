@@ -2687,6 +2687,37 @@ fn errored_and_other_terminal_wait_statuses_release_markers() {
 }
 
 #[test]
+fn wait_status_maps_release_only_terminal_markers() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    for agent_id in ["agent-a", "agent-b", "agent-live"] {
+        let mut start = input("SubagentStart", "session-a");
+        start.agent_id = Some(agent_id.to_string());
+        handle_hook(&start, root).unwrap();
+    }
+
+    let mut wait = input("PostToolUse", "session-a");
+    wait.tool_name = Some("agents.wait_agent".to_string());
+    wait.tool_response = Some(json!({
+        "status": {
+            "agent-a": { "completed": null },
+            "agent-b": { "errored": "upstream unavailable" },
+            "agent-live": "running"
+        },
+        "timed_out": false
+    }));
+    let result = handle_hook(&wait, root).unwrap();
+    assert_eq!(result["decision"], "block");
+    assert!(result["reason"].as_str().unwrap().contains("1 个子代理"));
+    assert_eq!(active_agent_count(root, "session-a").unwrap(), 1);
+
+    let mut stop = input("SubagentStop", "session-a");
+    stop.agent_id = Some("agent-live".to_string());
+    handle_hook(&stop, root).unwrap();
+    assert_eq!(active_agent_count(root, "session-a").unwrap(), 0);
+}
+
+#[test]
 fn full_agent_list_snapshot_reconciles_terminal_children() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

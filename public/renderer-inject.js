@@ -152,7 +152,7 @@
       #${accountUsageId} .codey-usage-overview[data-tone="critical"] .codey-usage-status { color: var(--codey-usage-danger); }
       #${accountUsageId} .codey-usage-overview .codey-usage-plan { flex: 0 0 auto; padding: 0 7px; font-size: 10.5px; line-height: 17px; }
       #${accountUsageId} .codey-usage-segment { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; row-gap: 1px; min-width: 0; transition: opacity .2s ease; }
-      #${accountUsageId}[data-state="stale"] .codey-usage-segment { opacity: .62; }
+      #${accountUsageId}[data-codey-state="stale"] .codey-usage-segment { opacity: .62; }
       #${accountUsageId} .codey-usage-label { color: var(--codey-usage-ink-2); font-size: 11.5px; white-space: nowrap; }
       #${accountUsageId} .codey-usage-reset { grid-column: 2 / -1; overflow: hidden; min-width: 0; color: var(--codey-usage-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
       #${accountUsageId} [data-pace="empty"] .codey-usage-reset { color: var(--codey-usage-danger); }
@@ -194,8 +194,8 @@
       #${accountUsageId} .codey-usage-pop-foot { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 12px; color: var(--codey-usage-ink-3); font-size: 11px; line-height: 15px; }
       #${accountUsageId} .codey-usage-updated, #${accountUsageId} .codey-usage-stale-note { overflow: hidden; margin-inline-start: auto; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
       #${accountUsageId} .codey-usage-stale-note { display: none; color: var(--codey-usage-warning); }
-      #${accountUsageId}[data-state="stale"] .codey-usage-updated { display: none; }
-      #${accountUsageId}[data-state="stale"] .codey-usage-stale-note { display: block; }
+      #${accountUsageId}[data-codey-state="stale"] .codey-usage-updated { display: none; }
+      #${accountUsageId}[data-codey-state="stale"] .codey-usage-stale-note { display: block; }
       #${accountUsageId} .codey-usage-error-message { display: -webkit-box; overflow: hidden; margin: 0; color: var(--codey-usage-ink-2); font-size: 12px; line-height: 17px; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
       @media (prefers-reduced-motion: reduce) {
         #${buttonId}, #${buttonId} *, #${accountUsageId}, #${accountUsageId}::before, #${accountUsageId} * { animation: none !important; transition: none !important; }
@@ -975,7 +975,7 @@
       }
       const usage = accountUsageMount();
       if (!usage) return;
-      usage.dataset.state = "error";
+      usage.dataset.codeyState = "error";
       delete usage.dataset.windowCount;
       usage.setAttribute("aria-label", "官方账号额度暂不可用");
       usage.setAttribute("aria-describedby", accountUsageDetailsId);
@@ -999,7 +999,7 @@
     }
     const usage = accountUsageMount();
     if (!usage) return;
-    usage.dataset.state = accountUsageStale ? "stale" : "ready";
+    usage.dataset.codeyState = accountUsageStale ? "stale" : "ready";
     usage.dataset.windowCount = String(summaryModels.length);
     const overview = accountUsageOverview(summaryModels, accountUsageStale, result.fetchedAt);
     if (accountUsageResetExpiring(result.resetCredits)) overview.text += " · 重置次数即将过期";

@@ -712,3 +712,314 @@ test("a generic limit title or request action alone does not match", () => {
   assert.equal(findCloseButton(panel), null);
   assert.equal(runtime.window.__codeyQuotaNoticeDismiss.dismiss(panel), false);
 });
+
+test("matches the typographic-apostrophe English banner and anchors to the full card", () => {
+  const runtime = createRuntime();
+  const banner = runtime.body.appendChild(createElement("section"));
+  const textBlock = banner.appendChild(createElement("div"));
+  textBlock.appendChild(createElement("h2", "You\u2019re out of Codex and Work usage"));
+  textBlock.appendChild(createElement(
+    "p",
+    "Your rate limit resets on 23:09. Upgrade or use one of your rate limit resets now.",
+  ));
+  const actions = banner.appendChild(createElement("div"));
+  const reset = actions.appendChild(createElement("button", "Reset usage"));
+  reset.setAttribute("aria-label", "Reset usage");
+  reset.setAttribute("title", "Reset usage");
+  actions.appendChild(createElement("button", "\u2726 Upgrade"));
+  runtime.emit([{ addedNodes: [banner], target: runtime.body, type: "childList" }]);
+
+  const close = findCloseButton(banner);
+  assert.ok(close);
+  assert.equal(close.parentElement, banner);
+  assert.equal(findCloseButton(textBlock), null);
+  close.click();
+  assert.equal(banner.style.display, "none:important");
+});
+
+test("anchors to the outer banner when only the upgrade action sibling is present", () => {
+  const runtime = createRuntime();
+  const row = runtime.body.appendChild(createElement("div"));
+  const banner = row.appendChild(createElement("section"));
+  const textBlock = banner.appendChild(createElement("div"));
+  textBlock.appendChild(createElement("h2", "You\u2019re out of Codex and Work usage"));
+  textBlock.appendChild(createElement(
+    "p",
+    "Your rate limit resets on 23:09. Upgrade to continue.",
+  ));
+  const actions = banner.appendChild(createElement("div"));
+  actions.appendChild(createElement("button", "\u2726 Upgrade"));
+  const composer = row.appendChild(createElement("form"));
+  composer.appendChild(createElement("textarea"));
+  runtime.emit([{ addedNodes: [banner], target: row, type: "childList" }]);
+
+  const close = findCloseButton(banner);
+  assert.ok(close);
+  assert.equal(close.parentElement, banner);
+  assert.equal(findCloseButton(textBlock), null);
+  close.click();
+  assert.equal(banner.style.display, "none:important");
+  assert.equal(composer.style.display, undefined);
+});
+
+test("matches via React Fiber i18n message IDs even when display text is in an unsupported language", () => {
+  const runtime = createRuntime();
+  const banner = runtime.body.appendChild(createElement("section"));
+  const textBlock = banner.appendChild(createElement("div"));
+  const heading = textBlock.appendChild(createElement("h2", "利用上限に達しました"));
+  heading.__reactFiber$test = {
+    child: {
+      memoizedProps: {
+        id: "codex.rateLimit.outOfUsage.title",
+      },
+      type: function FormattedMessage() {},
+    },
+    memoizedProps: {},
+    type: "h2",
+  };
+  const description = textBlock.appendChild(createElement("p", "23:09 にリセットされます。"));
+  description.__reactFiber$test = {
+    child: {
+      memoizedProps: {
+        id: "codex.rateLimit.outOfUsage.description",
+      },
+      type: function FormattedMessage() {},
+    },
+    memoizedProps: {},
+    type: "p",
+  };
+  const actions = banner.appendChild(createElement("div"));
+  const reset = actions.appendChild(createElement("button", "リセット"));
+  reset.__reactProps$test = {
+    "data-testid": "codex.rateLimit.resetUsage",
+  };
+  const upgrade = actions.appendChild(createElement("button", "アップグレード"));
+  upgrade.__reactProps$test = {
+    "data-testid": "codex.rateLimit.upgrade",
+  };
+
+  runtime.emit([{ addedNodes: [banner], target: runtime.body, type: "childList" }]);
+
+  const close = findCloseButton(banner);
+  assert.ok(close);
+  assert.equal(close.parentElement, banner);
+  assert.equal(findCloseButton(textBlock), null);
+  close.click();
+  assert.equal(banner.style.display, "none:important");
+});
+
+test("matches via React Fiber quota component props and ignores normal usage panels", () => {
+  const runtime = createRuntime();
+  const page = runtime.body.appendChild(createElement("main"));
+
+  const normalPanel = page.appendChild(createElement("section"));
+  normalPanel.appendChild(createElement("h2", "Usage summary"));
+  normalPanel.appendChild(createElement("p", "80% remaining"));
+  normalPanel.__reactFiber$test = {
+    memoizedProps: {},
+    return: {
+      memoizedProps: {
+        resetCredits: 2,
+        resetsAt: "23:09",
+      },
+      type: function UsageSummaryCard() {},
+    },
+    type: "section",
+  };
+
+  const banner = page.appendChild(createElement("section"));
+  const textBlock = banner.appendChild(createElement("div"));
+  textBlock.appendChild(createElement("h2", "Unrecognized localized heading"));
+  textBlock.appendChild(createElement("p", "Unrecognized localized subtitle"));
+  banner.__reactFiber$test = {
+    memoizedProps: {},
+    return: {
+      memoizedProps: {
+        onResetUsage() {},
+        onUpgrade() {},
+        rateLimitResetCredits: 1,
+        resetsAt: "23:09",
+      },
+      type: function RateLimitBanner() {},
+    },
+    type: "section",
+  };
+  const actions = banner.appendChild(createElement("div"));
+  const reset = actions.appendChild(createElement("button", "Action 1"));
+  reset.__reactProps$test = {
+    onResetUsage() {},
+  };
+
+  runtime.window.__codeyQuotaNoticeDismiss.scan(page);
+
+  assert.equal(findCloseButton(normalPanel), null);
+  const close = findCloseButton(banner);
+  assert.ok(close);
+  assert.equal(close.parentElement, banner);
+  close.click();
+  assert.equal(banner.style.display, "none:important");
+  assert.equal(normalPanel.style.display, undefined);
+});
+
+test("matches a composer slot banner structurally when title copy changes", () => {
+  const runtime = createRuntime();
+  const main = runtime.body.appendChild(createElement("main"));
+  const composerDock = main.appendChild(createElement("div"));
+  const banner = composerDock.appendChild(createElement("section"));
+  const textBlock = banner.appendChild(createElement("div"));
+  textBlock.appendChild(createElement("h2", "New arbitrary banner headline"));
+  textBlock.appendChild(createElement(
+    "p",
+    "Your rate limit resets on 23:09. Upgrade or use one of your rate limit resets now.",
+  ));
+  const actions = banner.appendChild(createElement("div"));
+  actions.appendChild(createElement("button", "Reset usage"));
+  actions.appendChild(createElement("button", "\u2726 Upgrade"));
+  const composer = composerDock.appendChild(createElement("form"));
+  composer.appendChild(createElement("textarea"));
+
+  runtime.emit([{ addedNodes: [banner], target: composerDock, type: "childList" }]);
+
+  const close = findCloseButton(banner);
+  assert.ok(close);
+  assert.equal(close.parentElement, banner);
+  close.click();
+  assert.equal(banner.style.display, "none:important");
+  assert.equal(composer.style.display, undefined);
+});
+
+test("never adds a close button to a paused or active goal bar beside or above a quota notice", () => {
+  const runtime = createRuntime();
+  const main = runtime.body.appendChild(createElement("main"));
+  const composerDock = main.appendChild(createElement("div"));
+  const bannerStack = composerDock.appendChild(createElement("div"));
+
+  const sharedComposerFiber = {
+    memoizedProps: {
+      isOutOfUsage: true,
+      onResetUsage() {},
+      onUpgrade() {},
+      rateLimitResetCredits: 1,
+      resetsAt: "23:09",
+    },
+    type: function ComposerBanners() {},
+  };
+
+  const goalBar = bannerStack.appendChild(createElement("section"));
+  goalBar.appendChild(createElement("span", "已暂停的目标"));
+  goalBar.appendChild(createElement(
+    "span",
+    "你是antigravity 的监工，现在里面有个cogdev项目正在开发，如果遇到 You're out of Codex and Work usage 且 Your rate limit resets on 23:09 请继续。",
+  ));
+  const timer = goalBar.appendChild(createElement("span", "6h 45m 17s"));
+  const goalActions = goalBar.appendChild(createElement("div"));
+  goalActions.appendChild(createElement("button", "删除"));
+  goalActions.appendChild(createElement("button", "继续"));
+  goalActions.appendChild(createElement("button", "展开"));
+  const goalComponentFiber = {
+    memoizedProps: { goalId: "goal-1" },
+    return: sharedComposerFiber,
+    type: function ThreadGoalBanner() {},
+  };
+  goalBar.__reactFiber$test = {
+    memoizedProps: {},
+    return: goalComponentFiber,
+    sibling: {},
+    type: "section",
+  };
+  goalComponentFiber.child = goalBar.__reactFiber$test;
+
+  const quotaBanner = bannerStack.appendChild(createElement("section"));
+  const textBlock = quotaBanner.appendChild(createElement("div"));
+  textBlock.appendChild(createElement("h2", "You\u2019re out of Codex and Work usage"));
+  textBlock.appendChild(createElement(
+    "p",
+    "Your rate limit resets on 23:09. Upgrade or use one of your rate limit resets now.",
+  ));
+  const quotaActions = quotaBanner.appendChild(createElement("div"));
+  quotaActions.appendChild(createElement("button", "Reset usage"));
+  quotaActions.appendChild(createElement("button", "\u2726 Upgrade"));
+
+  bannerStack.__reactProps$test = {
+    children: [
+      { props: { goalId: "goal-1" } },
+      {
+        props: {
+          isOutOfUsage: true,
+          onResetUsage() {},
+          onUpgrade() {},
+          resetsAt: "23:09",
+        },
+      },
+    ],
+  };
+
+  const composer = composerDock.appendChild(createElement("form"));
+  composer.appendChild(createElement("textarea"));
+
+  runtime.emit([{ addedNodes: [bannerStack], target: composerDock, type: "childList" }]);
+
+  assert.equal(findCloseButton(goalBar), null);
+  const close = findCloseButton(quotaBanner);
+  assert.ok(close);
+  assert.equal(close.parentElement, quotaBanner);
+
+  close.click();
+  assert.equal(quotaBanner.style.display, "none:important");
+  assert.equal(goalBar.style.display, undefined);
+
+  timer.textContent = "6h 45m 18s";
+  runtime.emit([
+    {
+      addedNodes: [{ nodeType: 3, textContent: timer.textContent }],
+      target: timer,
+      type: "childList",
+    },
+  ]);
+  runtime.window.__codeyQuotaNoticeDismiss.scan(composerDock);
+
+  assert.equal(findCloseButton(goalBar), null);
+  assert.equal(findCloseButton(bannerStack), null);
+  assert.equal(goalBar.style.display, undefined);
+});
+
+test("dismiss resolves the outer notice even when called on the text block", () => {
+  const runtime = createRuntime();
+  const banner = runtime.body.appendChild(createElement("section"));
+  const textBlock = banner.appendChild(createElement("div"));
+  textBlock.appendChild(createElement("h2", "Codex 和工作使用额度已用完"));
+  textBlock.appendChild(createElement(
+    "p",
+    "你的速率限制将于 19:34 重置。立即升级，或使用一次速率限制重置机会。",
+  ));
+  const actions = banner.appendChild(createElement("div"));
+  actions.appendChild(createElement("button", "重置使用量"));
+
+  assert.equal(runtime.window.__codeyQuotaNoticeDismiss.dismiss(textBlock), true);
+  assert.equal(banner.style.display, "none:important");
+});
+
+test("dismiss removes the pure wrapper shell instead of leaving an empty box", () => {
+  const runtime = createRuntime();
+  const row = runtime.body.appendChild(createElement("div"));
+  const shell = row.appendChild(createElement("section"));
+  const notice = shell.appendChild(createElement("div"));
+  notice.appendChild(createElement("h2", "Codex 和工作使用额度已用完"));
+  notice.appendChild(createElement(
+    "p",
+    "你的速率限制将于 19:34 重置。立即升级，或使用一次速率限制重置机会。",
+  ));
+  const actions = notice.appendChild(createElement("div"));
+  actions.appendChild(createElement("button", "重置使用量"));
+  const composer = row.appendChild(createElement("form"));
+  composer.appendChild(createElement("textarea"));
+
+  runtime.window.__codeyQuotaNoticeDismiss.scan(runtime.body);
+
+  const close = findCloseButton(shell);
+  assert.ok(close);
+  assert.equal(findCloseButton(notice), null);
+  close.click();
+  assert.equal(shell.style.display, "none:important");
+  assert.equal(composer.style.display, undefined);
+});
