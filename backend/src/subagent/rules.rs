@@ -508,7 +508,14 @@ pub(crate) fn classify_tool(tool_name: &str) -> ToolClass {
         ToolClass::Collaboration
     } else if matches!(
         normalized.as_str(),
-        "apply_patch" | "replace" | "write_file" | "edit_file" | "create_file" | "delete_file"
+        "apply_patch"
+            | "replace"
+            | "write_file"
+            | "edit_file"
+            | "create_file"
+            | "delete_file"
+            | "delete"
+            | "move"
     ) {
         ToolClass::Write
     } else if matches!(
@@ -587,7 +594,17 @@ pub(crate) fn normalize_tool_name(tool_name: &str) -> String {
         | "codey_fastctx.replace" => Some("replace"),
         "write_file" => Some("write_file"),
         "edit_file" => Some("edit_file"),
-        "create_file" => Some("create_file"),
+        "create_file"
+        | "mcp__codey_fastctx__create_file"
+        | "codey_fastctx__create_file"
+        | "codey_fastctx.create_file" => Some("create_file"),
+        "delete"
+        | "mcp__codey_fastctx__delete"
+        | "codey_fastctx__delete"
+        | "codey_fastctx.delete" => Some("delete"),
+        "move" | "mcp__codey_fastctx__move" | "codey_fastctx__move" | "codey_fastctx.move" => {
+            Some("move")
+        }
         "delete_file" => Some("delete_file"),
         "read_file" => Some("read_file"),
         "inspect_local_file"
@@ -941,9 +958,12 @@ mod tests {
             ("grep", ToolClass::Read),
             ("glob", ToolClass::Read),
             ("replace", ToolClass::Write),
+            ("create_file", ToolClass::Write),
+            ("delete", ToolClass::Write),
+            ("move", ToolClass::Write),
         ] {
-            for separator in [".", "__"] {
-                let alias = format!("codey_fastctx{separator}{tool}");
+            for prefix in ["codey_fastctx.", "codey_fastctx__", "mcp__codey_fastctx__"] {
+                let alias = format!("{prefix}{tool}");
                 assert_eq!(classify_tool(&alias), expected, "{alias}");
                 assert_eq!(normalize_tool_name(&alias), tool, "{alias}");
             }

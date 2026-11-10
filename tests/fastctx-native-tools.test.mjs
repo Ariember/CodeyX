@@ -4,7 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const source = readFileSync(new URL("../public/codex-runtime-adapter.js", import.meta.url), "utf8");
-const names = ["inspect_local_file", "grep", "glob", "replace"];
+const names = ["inspect_local_file", "grep", "glob", "replace", "delete", "move", "create_file"];
 const definitions = names.map((name) => ({ name, description: name, inputSchema: { type: "object" } }));
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -101,6 +101,25 @@ test("native results preserve continuation text and map image content", async ()
   assert.deepEqual(plain(calls[0].args.permissions), { sandboxPolicy: { type: "dangerFullAccess" } });
   assert.equal(calls[0].args.arguments.cwd, "C:/untrusted");
   assert.equal(context.disposals(), 1);
+});
+
+test("filesystem mutations reach the native backend with their arguments intact", async () => {
+  for (const [tool, arguments_] of [
+    ["create_file", { path: "E:/项目/new.txt", content: "中文\r\n" }],
+    ["move", { source: "E:/项目/new.txt", destination: "E:/项目/moved.txt" }],
+    ["delete", { paths: ["E:/项目/moved.txt"], dry_run: false }],
+  ]) {
+    const calls = [];
+    const { api } = fixture(async (method, args) => { calls.push({ method, args }); return { content: [], isError: false }; });
+    const context = execution();
+    context.request.tool = tool;
+    context.request.arguments = arguments_;
+    assert.equal((await api.execute(context)).success, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, "call_fastctx_native_tool");
+    assert.equal(calls[0].args.tool, tool);
+    assert.deepEqual(plain(calls[0].args.arguments), arguments_);
+  }
 });
 
 test("invalid host and restricted or unknown permission profiles do not invoke the backend", async () => {

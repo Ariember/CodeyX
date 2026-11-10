@@ -1019,7 +1019,7 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 [[package]]
 name = "fastctx"
 version = "0.2.6"
-source = "git+https://github.com/Ariember/fastctx?rev=5e14860d5cf591e1ffd03a37a2c0aaebfe169320#5e14860d5cf591e1ffd03a37a2c0aaebfe169320"
+source = "git+https://github.com/Ariember/fastctx?rev=84cdf614c70805ba192d8820c68b0047747f7877#84cdf614c70805ba192d8820c68b0047747f7877"
 dependencies = [
  "base64 0.22.1",
  "bpe-openai",

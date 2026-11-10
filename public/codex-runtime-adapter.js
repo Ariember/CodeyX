@@ -719,7 +719,7 @@
   };
 
   const fastCtxNamespace = "codey_fastctx";
-  const fastCtxTools = new Set(["inspect_local_file", "grep", "glob", "replace"]);
+  const fastCtxTools = new Set(["inspect_local_file", "grep", "glob", "replace", "delete", "move", "create_file"]);
   const fastCtxCalls = new Map();
   const fastCtxCancellations = new Set();
   const fastCtxFailure = (text) => ({ success: false, contentItems: [{ type: "inputText", text }] });

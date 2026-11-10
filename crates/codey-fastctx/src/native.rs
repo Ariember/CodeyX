@@ -156,7 +156,7 @@ pub async fn run() -> Result<()> {
                         }
                         "tools/call" => {
                             let call = match serde_json::from_value::<ToolCall>(request.params) {
-                                Ok(call) if matches!(call.name.as_str(), "inspect_local_file" | "grep" | "glob" | "replace") => call,
+                                Ok(call) if matches!(call.name.as_str(), "inspect_local_file" | "grep" | "glob" | "replace" | "delete" | "move" | "create_file") => call,
                                 _ => {
                                     write_response(&mut stdout, &request.id, error("Invalid or unsupported native tool call"), limits).await?;
                                     continue;

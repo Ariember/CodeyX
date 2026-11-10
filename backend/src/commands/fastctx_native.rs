@@ -114,7 +114,7 @@ fn validate_call(call: &ToolCall) -> Result<(), String> {
     identifier(&call.turn_id)?;
     if !matches!(
         call.tool.as_str(),
-        "inspect_local_file" | "grep" | "glob" | "replace"
+        "inspect_local_file" | "grep" | "glob" | "replace" | "delete" | "move" | "create_file"
     ) || !call.arguments.is_object()
     {
         return Err("FastCtx native 工具或参数无效".into());
@@ -137,14 +137,22 @@ fn validate_call(call: &ToolCall) -> Result<(), String> {
 
 fn tool_names_valid(result: &Value) -> bool {
     result["tools"].as_array().is_some_and(|tools| {
-        tools.len() == 4
-            && ["inspect_local_file", "grep", "glob", "replace"]
-                .iter()
-                .all(|name| {
-                    tools
-                        .iter()
-                        .any(|tool| tool["name"] == *name && tool["inputSchema"].is_object())
-                })
+        tools.len() == 7
+            && [
+                "inspect_local_file",
+                "grep",
+                "glob",
+                "replace",
+                "delete",
+                "move",
+                "create_file",
+            ]
+            .iter()
+            .all(|name| {
+                tools
+                    .iter()
+                    .any(|tool| tool["name"] == *name && tool["inputSchema"].is_object())
+            })
     })
 }
 
@@ -258,6 +266,34 @@ mod tests {
             call.permissions = json!({"sandboxPolicy":{"type":"dangerFullAccess"},"activePermissionProfile":profile});
             assert!(validate_call(&call).is_err());
         }
+    }
+
+    #[test]
+    fn filesystem_mutations_require_full_access_and_complete_tool_metadata() {
+        let mut call = call();
+        for tool in ["create_file", "move", "delete"] {
+            call.tool = tool.into();
+            call.permissions = json!({"sandboxPolicy":{"type":"dangerFullAccess"}});
+            assert!(validate_call(&call).is_ok(), "{tool}");
+            call.permissions = json!({"sandboxPolicy":{"type":"readOnly"}});
+            assert!(validate_call(&call).is_err(), "{tool}");
+        }
+        let mut tools = [
+            "inspect_local_file",
+            "grep",
+            "glob",
+            "replace",
+            "delete",
+            "move",
+            "create_file",
+        ]
+        .map(|name| json!({"name":name,"inputSchema":{"type":"object"}}))
+        .to_vec();
+        assert!(tool_names_valid(&json!({"tools":tools})));
+        tools.pop();
+        assert!(!tool_names_valid(&json!({"tools":tools})));
+        tools.push(tools[0].clone());
+        assert!(!tool_names_valid(&json!({"tools":tools})));
     }
 
     #[test]

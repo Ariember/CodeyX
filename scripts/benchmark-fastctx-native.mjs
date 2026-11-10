@@ -316,7 +316,7 @@ export async function runBenchmark(options) {
           workers[mode] = new Worker(binaries[mode], mode, temporary, isolatedHome);
           definitions[mode] = await workers[mode].ready();
         }
-        assert.deepEqual(definitions.native.tools.map(tool => tool.name).sort(), ["glob", "grep", "inspect_local_file", "replace"]);
+        assert.deepEqual(definitions.native.tools.map(tool => tool.name).sort(), ["create_file", "delete", "glob", "grep", "inspect_local_file", "move", "replace"]);
         const expected = new Map();
         for (const scenario of scenarios) {
           const baseline = await workers.native.call(scenario);

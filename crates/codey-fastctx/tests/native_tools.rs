@@ -133,7 +133,18 @@ fn native_entry_exposes_portable_schemas_and_file_results() {
         .map(|tool| tool["name"].as_str().unwrap())
         .collect::<Vec<_>>();
     names.sort_unstable();
-    assert_eq!(names, ["glob", "grep", "inspect_local_file", "replace"]);
+    assert_eq!(
+        names,
+        [
+            "create_file",
+            "delete",
+            "glob",
+            "grep",
+            "inspect_local_file",
+            "move",
+            "replace"
+        ]
+    );
     for tool in tools {
         assert_portable_tool_schema(&tool["inputSchema"]);
     }
@@ -185,6 +196,60 @@ fn native_entry_exposes_portable_schemas_and_file_results() {
         !root.join("runtime.log").exists(),
         "native calls must not spawn a runtime host"
     );
+}
+
+#[test]
+fn native_filesystem_mutations_preserve_content_and_existing_entries() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("新文件.txt");
+    let destination = temp.path().join("移动后.txt");
+    let content = "中文\r\ntext without final newline";
+    let mut worker = Worker::spawn(temp.path());
+    let response = worker.call(
+        "create",
+        "create_file",
+        json!({"path":source,"content":content}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(std::fs::read(&source).unwrap(), content.as_bytes());
+
+    let response = worker.call(
+        "create-existing",
+        "create_file",
+        json!({"path":source,"content":"overwrite"}),
+    );
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    std::fs::write(&destination, "keep").unwrap();
+    let response = worker.call(
+        "move-existing",
+        "move",
+        json!({"source":source,"destination":destination}),
+    );
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert_eq!(std::fs::read(&source).unwrap(), content.as_bytes());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"keep");
+    std::fs::remove_file(&destination).unwrap();
+    let response = worker.call(
+        "move",
+        "move",
+        json!({"source":source,"destination":destination}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(!source.exists());
+    assert_eq!(std::fs::read(&destination).unwrap(), content.as_bytes());
+
+    let response = worker.call("preview", "delete", json!({"paths":[destination]}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(text(&response).contains("dry run"), "{response}");
+    assert_eq!(std::fs::read(&destination).unwrap(), content.as_bytes());
+    let response = worker.call(
+        "delete",
+        "delete",
+        json!({"paths":[destination],"dry_run":false}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(!destination.exists());
+    worker.finish();
 }
 
 #[test]
@@ -406,7 +471,7 @@ fn native_rejects_invalid_envelopes_without_executing_them() {
             .as_array()
             .unwrap()
             .len(),
-        4
+        7
     );
     worker.finish();
 }

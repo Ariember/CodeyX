@@ -678,7 +678,42 @@ async fn native_backend_real_sidecar_smoke() {
         home.join("state").to_string_lossy().into_owned(),
     );
     let result = manager.tools(&binary, &cwd, &env).await.unwrap();
-    assert_eq!(result["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(result["tools"].as_array().unwrap().len(), 7);
+    let created = cwd.join("created.txt");
+    let moved = cwd.join("moved.txt");
+    for (id, tool, arguments) in [
+        (
+            "real-create",
+            "create_file",
+            json!({"path":created,"content":"new 世界"}),
+        ),
+        (
+            "real-move",
+            "move",
+            json!({"source":created,"destination":moved}),
+        ),
+        ("real-preview", "delete", json!({"paths":[moved]})),
+        (
+            "real-delete",
+            "delete",
+            json!({"paths":[moved],"dry_run":false}),
+        ),
+    ] {
+        let mut call = request(id, arguments);
+        call.tool = tool.into();
+        let result = manager.call(&binary, &cwd, &env, call).await.unwrap();
+        assert_eq!(result["isError"], false, "{result}");
+        if id != "real-delete" {
+            let path = if id == "real-create" {
+                &created
+            } else {
+                &moved
+            };
+            assert_eq!(std::fs::read_to_string(path).unwrap(), "new 世界");
+        }
+    }
+    assert!(!created.exists());
+    assert!(!moved.exists());
     let mut call = request("real-call", json!({"file_path":cwd.join("sample.txt")}));
     call.tool = "inspect_local_file".into();
     let result = manager.call(&binary, &cwd, &env, call).await.unwrap();
