@@ -17,6 +17,10 @@ struct Worker {
 
 impl Worker {
     fn spawn(root: &Path) -> Self {
+        Self::spawn_with_budget(root, 4096)
+    }
+
+    fn spawn_with_budget(root: &Path, budget: usize) -> Self {
         let home = root.join("isolated-home");
         std::fs::create_dir_all(&home).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_codey-fastctx"));
@@ -28,7 +32,8 @@ impl Worker {
             .env("CODEX_HOME", home.join(".codex"))
             .env("CODEY_APP_STATE_DIR", home.join("codey-state"))
             .env("FASTCTX_TEST_RUNTIME_EVENT_LOG", root.join("runtime.log"))
-            .env("FASTCTX_TOKEN_BUDGET", "4096")
+            .env("FASTCTX_TOKEN_BUDGET", budget.to_string())
+            .env("FASTCTX_READ_TOKEN_BUDGET", budget.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -180,6 +185,39 @@ fn native_entry_exposes_portable_schemas_and_file_results() {
         !root.join("runtime.log").exists(),
         "native calls must not spawn a runtime host"
     );
+}
+
+#[test]
+fn native_repeated_reads_keep_the_host_token_budget() {
+    const BUDGET: usize = 24_000;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("entropy.txt");
+    let body = (0_u64..2_000)
+        .map(|line| {
+            format!(
+                "{line:04} {:016x} {:016x} {:016x} {:016x}\n",
+                line.wrapping_mul(0x9e3779b97f4a7c15),
+                line.wrapping_mul(0xbf58476d1ce4e5b9),
+                line.wrapping_mul(0x94d049bb133111eb),
+                line.wrapping_mul(0xd1342543de82ef95),
+            )
+        })
+        .collect::<String>();
+    std::fs::write(&path, body).unwrap();
+    let mut worker = Worker::spawn_with_budget(temp.path(), BUDGET);
+    for id in ["read-first", "read-again", "read-third"] {
+        let response = worker.call(
+            id,
+            "inspect_local_file",
+            json!({"file_path":path,"limit":2_000}),
+        );
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        let output = text(&response);
+        let tokens = fastctx::budget::estimate_tokens(&output);
+        assert!(tokens > 13_600 && tokens <= BUDGET, "{tokens} tokens");
+        assert!(output.contains("Partial:"), "{output}");
+    }
+    worker.finish();
 }
 
 fn assert_portable_tool_schema(value: &Value) {

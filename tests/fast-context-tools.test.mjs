@@ -72,10 +72,8 @@ test("CodeyX keeps FastCtx in the dedicated sidecar", async () => {
 
   assert.match(manifest, /name = "codey-fastctx"/);
   assert.match(sidecarSource, /codey_fastctx::native::run/);
-  assert.doesNotMatch(sidecarSource, /fastctx::cli::run_server|--codey-fastctx-(?:owned-)?mcp/);
-  assert.match(sidecarSource, /fastctx::cli::run\(\)/);
-  assert.match(sidecarSource, /runtime-bootstrap/);
-  assert.match(sidecarSource, /runtime-host/);
+  assert.doesNotMatch(sidecarSource, /fastctx::cli::|--codey-fastctx-(?:owned-)?mcp/);
+  assert.match(sidecarSource, /validate_arguments\(std::env::args_os\(\)\)/);
   // 主程序既不链接 FastCtx，也不再充当启动 sidecar 的兼容代理。
   assert.doesNotMatch(mainSource, /fastctx::/);
   assert.doesNotMatch(libSource, /fastctx::/);

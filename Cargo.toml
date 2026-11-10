@@ -21,7 +21,7 @@ arc-swap = "1"
 base64 = "0.22"
 bytes = "1"
 directories = "6"
-fastctx = { git = "https://github.com/Ariember/fastctx", rev = "36122d57c04832e9a4951b1eb5e3bffbf54ec139", default-features = false }
+fastctx = { git = "https://github.com/Ariember/fastctx", rev = "5e14860d5cf591e1ffd03a37a2c0aaebfe169320", default-features = false }
 fs2 = "0.4"
 futures-util = "0.3"
 reqwest = { version = "0.12", features = ["http2", "json", "stream", "rustls-tls", "rustls-tls-native-roots", "system-proxy"], default-features = false }
