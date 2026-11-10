@@ -5,6 +5,45 @@ const sources = ["codex-runtime-adapter.js", "codey-inject.js"].map(name => (
   readFileSync(new URL(`../../public/${name}`, import.meta.url), "utf8")
 ));
 
+test("批量项目导入按钮先统一测量再挂载，悬浮后按新位置更新", async ({ page }) => {
+  await page.setContent(`<style>
+    .project { position: relative; width: 248px; height: 32px; }
+    .actions { position: absolute; right: 4px; top: 4px; display: flex; }
+    .native-action { width: 24px; height: 24px; }
+  </style><aside data-app-action-sidebar-section>
+    ${Array.from({ length: 12 }, (_, index) => `
+      <div class="project" data-app-action-sidebar-project-row data-app-action-sidebar-project-id="E:/workspace/project-${index}">
+        项目 ${index}<div class="actions"><button class="native-action" aria-label="项目操作">+</button></div>
+      </div>
+    `).join("")}
+  </aside>`);
+  await page.evaluate(() => {
+    window.__codexSessionDeleteBridge = async () => ({ status: "ok" });
+    window.projectWork = [];
+    const getClientRects = Element.prototype.getClientRects;
+    Element.prototype.getClientRects = function () {
+      if (this.getAttribute("aria-label") === "项目操作") window.projectWork.push("read");
+      return getClientRects.call(this);
+    };
+    const appendChild = Node.prototype.appendChild;
+    Node.prototype.appendChild = function (child) {
+      if (child.hasAttribute?.("data-codey-project-import")) window.projectWork.push("write");
+      return appendChild.call(this, child);
+    };
+  });
+  for (const content of sources) await page.addScriptTag({ content });
+  const buttons = page.locator("[data-codey-project-import]");
+  await expect(buttons).toHaveCount(12);
+  expect(await page.evaluate(() => window.projectWork)).toEqual([
+    ...Array(12).fill("read"), ...Array(12).fill("write"),
+  ]);
+  await expect(buttons.first()).toHaveCSS("right", "32px");
+  const project = page.locator(".project").first();
+  await project.locator(".actions").evaluate(element => { element.style.right = "28px"; });
+  await project.hover();
+  await expect(buttons.first()).toHaveCSS("right", "56px");
+});
+
 test("侧边栏增强按钮在新旧原生操作容器内保持同行", async ({ page }, testInfo) => {
   await page.setContent(`
     <style>

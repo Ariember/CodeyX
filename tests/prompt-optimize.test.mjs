@@ -1299,6 +1299,49 @@ test("disabling prompt optimization cancels a queued input and observer text rea
   assert.equal(env.getElementById("codey-prompt-optimize-button").style.display, "none");
 });
 
+test("restores individual button attributes without rewriting unchanged state", async () => {
+  const env = createEnvironment({ initialText: "draft" });
+  await flush();
+  const button = env.getElementById("codey-prompt-optimize-button");
+  const writes = [];
+  const setAttribute = button.setAttribute.bind(button);
+  button.setAttribute = (name, value) => { writes.push(name); setAttribute(name, value); };
+  let disabledWrites = 0;
+  Object.defineProperty(button, "disabled", {
+    get: () => false,
+    set: () => { disabledWrites += 1; },
+  });
+  for (const [name, value] of [["aria-busy", "false"], ["aria-disabled", "false"], ["aria-label", "优化提示词"]]) {
+    setAttribute(name, "stale");
+    writes.length = 0;
+    env.emitInput();
+    await flush();
+    assert.equal(button.getAttribute(name), value);
+    assert.deepEqual(writes, [name]);
+  }
+  button.title = "stale";
+  writes.length = 0;
+  env.emitInput();
+  await flush();
+  assert.equal(button.title, "优化提示词");
+  assert.deepEqual(writes, []);
+  assert.equal(disabledWrites, 0);
+});
+
+test("clearing the composer before a queued state update never sends an empty optimization request", async () => {
+  const env = createEnvironment({ initialText: "draft" });
+  await flush();
+  const button = env.getElementById("codey-prompt-optimize-button");
+  assert.equal(button.disabled, false);
+  env.textarea.value = "";
+  env.emitInput();
+  button.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+  await flush();
+  assert.equal(env.calls.some(call => call.path === "/api/optimize_prompt"), false);
+  assert.equal(button.disabled, true);
+  assert.equal(env.getElementById("codey-runtime-toast"), null);
+});
+
 test("clicking the button calls the bridge and replaces the composer text", async () => {
   const env = createEnvironment({
     enabled: true,

@@ -1635,25 +1635,30 @@
   };
 
   const installProjectImportButtons = (root = document) => {
+    const targets = [];
     queryWithin(root,
       "[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]",
     ).forEach((project) => {
       if (!(project instanceof HTMLElement) || project.querySelector(`[${projectImportAttribute}]`)) return;
       const projectPath = projectPathFromRow(project);
       if (!projectPath) return;
+      const { actionControl, right } = measureProjectImportPlacement(project);
+      targets.push({ actionControl, project, projectPath, right });
+    });
+    targets.forEach(({ actionControl, project, projectPath, right }) => {
       project.dataset.codeyProjectPath = projectPath;
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute(projectImportAttribute, "true");
       button.setAttribute("aria-label", "导入会话数据到此项目");
-      inheritNativeButtonClass(button, findProjectActionControl(project));
+      inheritNativeButtonClass(button, actionControl);
       button.innerHTML = projectImportIcon;
-      wrapNativeButtonIcon(button, findProjectActionControl(project));
+      wrapNativeButtonIcon(button, actionControl);
       attachSidebarActionTooltip(button, "导入会话数据到此项目");
       const refreshPosition = () => positionProjectImportButton(project, button);
       project.addEventListener("mouseenter", refreshPosition);
       project.addEventListener("focusin", refreshPosition);
-      refreshPosition();
+      if (right > 0) button.style.right = `${right}px`;
       ["pointerdown", "mousedown", "mouseup", "touchstart"].forEach((eventName) => {
         button.addEventListener(eventName, stopSidebarActionEvent, true);
       });
@@ -1738,17 +1743,22 @@
       return Boolean(className) && !classes.includes("sr-only") && control.getClientRects().length > 0;
     });
 
-  const findProjectActionControl = (project) => projectActionControls(project)[0];
-
-  const positionProjectImportButton = (project, button) => {
+  const measureProjectImportPlacement = (project) => {
+    const controls = projectActionControls(project);
+    const actionControl = controls[0];
     const projectRect = project.getBoundingClientRect();
-    const actionRects = projectActionControls(project)
+    const actionRects = controls
       .map((control) => control.getBoundingClientRect())
       .filter((rect) => rect.width > 0 && rect.height > 0);
-    if (projectRect.width <= 0 || actionRects.length === 0) return;
+    if (projectRect.width <= 0 || actionRects.length === 0) return { actionControl, right: 0 };
     const leftmostAction = Math.min(...actionRects.map((rect) => rect.left));
     const right = Math.ceil(projectRect.right - leftmostAction + 4);
-    if (Number.isFinite(right) && right > 0) button.style.right = `${right}px`;
+    return { actionControl, right: Number.isFinite(right) && right > 0 ? right : 0 };
+  };
+
+  const positionProjectImportButton = (project, button) => {
+    const { right } = measureProjectImportPlacement(project);
+    if (right > 0) button.style.right = `${right}px`;
   };
 
   const archivePlacementTarget = (thread, archiveControl) => {
@@ -1799,10 +1809,10 @@
   };
 
   const scan = (root = document, syncTitles = true) => {
+    installProjectImportButtons(root);
     installSessionExportButtons(root);
     installTasksImportButton(root);
     installSessionDeleteButtons(root);
-    installProjectImportButtons(root);
     installThreadUpdatedTimes(root);
     recoverHiddenRunningThreads(root);
     if (syncTitles) syncSidebarTitles(root);

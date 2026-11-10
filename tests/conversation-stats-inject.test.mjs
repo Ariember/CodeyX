@@ -924,6 +924,71 @@ test("centers the details immediately above the trigger and clamps the viewport"
   assert.equal(panel(env).style.left, "12px");
 });
 
+test("unchanged rescans skip panel measurements while movement and content changes reposition it", async () => {
+  const env = createEnvironment({ manualTimers: true, statsBySession: { "conversation-1": STATS } });
+  try {
+    env.runTimer(0);
+    await flushTimers(0);
+    let entry = { left: 200, top: 700, width: 400, height: 28 };
+    let measurements = 0;
+    summary(env).getBoundingClientRect = () => entry;
+    panel(env).getBoundingClientRect = () => { measurements += 1; return { width: 420, height: 300 }; };
+    click(summary(env));
+    assert.equal(measurements, 1);
+    for (let index = 0; index < 5; index += 1) {
+      env.emitAnchorMutation();
+      env.runTimer(120);
+    }
+    assert.equal(measurements, 1);
+    entry = { ...entry, left: 300 };
+    env.emitAnchorMutation();
+    env.runTimer(120);
+    assert.equal(measurements, 2);
+    assert.equal(panel(env).style.left, "290px");
+
+    env.setStats("conversation-1", { ...STATS, lastTurn: { ...LAST_TURN, stepCount: 3, toolDurationMs: 6000 } });
+    env.refresh();
+    env.runTimer(0);
+    await flushTimers(0);
+    assert.equal(measurements, 3);
+    assert.equal(field(env.bar(), "toolDurationMs"), "6秒");
+  } finally { env.dispose(); }
+});
+
+test("CodeGraph details changes remeasure an open panel", async () => {
+  let codegraph = { projectPath: "E:/project", phase: "watching", message: "已接入" };
+  const env = createEnvironment({ manualTimers: true, request: async () => ({ status: "ok", stats: STATS, codegraph }) });
+  try {
+    env.runTimer(0);
+    await flushTimers(0);
+    const refs = env.bar().__codeyCs;
+    let measurements = 0;
+    refs.panels.codegraph.getBoundingClientRect = () => { measurements += 1; return { width: 420, height: 300 }; };
+    click(refs.buttons.codegraph);
+    assert.equal(measurements, 1);
+    codegraph = { ...codegraph, projectPath: "E:/another-project", message: "索引更新中" };
+    env.refresh();
+    env.runTimer(0);
+    await flushTimers(0);
+    assert.equal(measurements, 2);
+    assert.equal(refs.projectPath.textContent, codegraph.projectPath);
+    assert.equal(refs.notes.codegraph.textContent, codegraph.message);
+  } finally { env.dispose(); }
+});
+
+test("formats token totals around the million boundary without displaying 1000k", async () => {
+  const env = createEnvironment({ manualTimers: true });
+  try {
+    for (const [totalTokens, label] of [[999_499, "999k"], [999_500, "1.0M"], [999_999, "1.0M"], [1_000_000, "1.0M"]]) {
+      env.setStats("conversation-1", { ...STATS, totalTokens });
+      env.refresh();
+      env.runTimer(0);
+      await flushTimers(0);
+      assert.equal(metric(env.bar(), "total"), `${label} tok`);
+    }
+  } finally { env.dispose(); }
+});
+
 test("Escape restores focus only when focus was inside the stats bar", async () => {
   const env = createEnvironment();
   await flushTimers(30);

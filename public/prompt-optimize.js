@@ -612,17 +612,17 @@
     if (!button) return;
     const empty = !readComposerText().trim();
     const disabled = busy || empty;
-    if (button.disabled === disabled
-      && button.dataset.busy === String(busy)
-      && button.dataset.empty === String(empty)) return;
-    button.disabled = disabled;
-    button.dataset.busy = String(busy);
-    button.dataset.empty = String(empty);
-    button.setAttribute("aria-busy", String(busy));
-    button.setAttribute("aria-disabled", String(disabled));
+    const busyValue = String(busy);
+    const emptyValue = String(empty);
+    const disabledValue = String(disabled);
     const label = busy ? "正在优化提示词" : empty ? "请输入内容后优化" : "优化提示词";
-    button.setAttribute("aria-label", label);
-    button.title = label;
+    if (button.disabled !== disabled) button.disabled = disabled;
+    if (button.dataset.busy !== busyValue) button.dataset.busy = busyValue;
+    if (button.dataset.empty !== emptyValue) button.dataset.empty = emptyValue;
+    if (button.getAttribute("aria-busy") !== busyValue) button.setAttribute("aria-busy", busyValue);
+    if (button.getAttribute("aria-disabled") !== disabledValue) button.setAttribute("aria-disabled", disabledValue);
+    if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
+    if (button.title !== label) button.title = label;
   };
 
   const scheduleButtonState = () => {

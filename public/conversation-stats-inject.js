@@ -2,7 +2,7 @@
 // /session/stats 返回统计范围；会话 id 取自可见 composer，隐藏会话不参与。
 (() => {
   const PROBE_KEY = "__codeyConversationStats";
-  const VERSION = 14;
+  const VERSION = 15;
   const previous = window[PROBE_KEY];
   if (previous?.installed && (previous.version === VERSION || !previous.dispose)) return;
   previous?.dispose?.();
@@ -309,19 +309,22 @@
   const formatTokenCount = (value) => {
     if (value == null || !Number.isFinite(value)) return "—";
     if (value < 1_000) return `${Math.round(value)}`;
-    if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
+    if (value < 999_500) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
     return `${(value / 1_000_000).toFixed(1)}M`;
   };
 
-  const positionPanel = () => {
+  const positionPanel = (anchor, onlyIfMoved = false) => {
     const refs = statsElement?.__codeyCs;
     if (!refs?.active) return;
-    if (!statsElement.isConnected || !findVisibleComposerAnchor()) { setExpanded(false); return; }
+    if (!statsElement.isConnected || !(anchor === undefined ? findVisibleComposerAnchor() : anchor)) { setExpanded(false); return; }
     syncPanelTheme();
     const panel = refs.panels[refs.active];
     const rect = refs.buttons[refs.active].getBoundingClientRect();
     const height = window.innerHeight || document.documentElement.clientHeight;
     const width = window.innerWidth || document.documentElement.clientWidth;
+    const placement = [refs.active, rect.left, rect.top, rect.width, rect.height, width, height].join(":");
+    if (onlyIfMoved && refs.placement === placement) return;
+    refs.placement = placement;
     // 气泡贴近入口，鼠标可以直接移入；只覆盖编辑器，不推动页面布局。
     const available = Math.max(80, rect.top - 20);
     setValue(panel.style, "maxHeight", `${Math.min(height - 24, available)}px`);
@@ -395,13 +398,14 @@
   };
 
   const setText = (element, value) => {
-    if (element.textContent === value) return;
+    if (element.textContent === value) return false;
     // 保留文本节点，避免统计更新触发宿主 :has() 的整树样式重算。
     if (element.childNodes?.length === 1 && element.firstChild?.nodeType === 3) {
       element.firstChild.nodeValue = value;
     } else {
       element.textContent = value;
     }
+    return true;
   };
 
   const setValue = (object, key, value) => {
@@ -453,6 +457,7 @@
       : `本轮总输出 Token ÷ 本轮生成耗时，工具间隔不计；${coverageNote}${estimatedSpeed && speedKnown ? "；含生成中的 Token 估算" : ""}`;
     const rate = cacheRatePercent(data.inputTokens, data.cachedInputTokens) || "—";
     const refs = bar.__codeyCs;
+    let panelContentChanged = false;
     const projectVisible = typeof codegraph?.projectPath === "string" && Boolean(codegraph.projectPath);
     setValue(refs.buttons.codegraph, "hidden", !projectVisible);
     if (!projectVisible && refs.active === "codegraph") setExpanded(false);
@@ -461,8 +466,8 @@
     const graphLabel = typeof graphLabels[graphPhase] === "string" ? graphLabels[graphPhase] : "状态未知";
     const graphMessage = graphLabel === "状态未知" ? "暂时无法读取当前项目的索引状态，将自动重试。" : codegraph?.message || "";
     setText(refs.codegraph, projectVisible ? `CodeGraph ${graphLabel}` : "");
-    setText(refs.projectPath, projectVisible ? codegraph.projectPath : "");
-    setText(refs.notes.codegraph, projectVisible ? graphMessage : "");
+    panelContentChanged = setText(refs.projectPath, projectVisible ? codegraph.projectPath : "") || panelContentChanged;
+    panelContentChanged = setText(refs.notes.codegraph, projectVisible ? graphMessage : "") || panelContentChanged;
     setAttribute(refs.buttons.codegraph, "aria-label", `CodeGraph ${graphLabel}，查看当前项目索引状态`);
     setText(refs.speed, speedText);
     setValue(refs.speed, "title", speedNote);
@@ -489,19 +494,20 @@
     const tokenValue = value => finite(value) ? `${count(value)} tok` : "—";
     data.uncachedInputTokens = finite(data.inputTokens) && finite(data.cachedInputTokens) && data.cachedInputTokens <= data.inputTokens ? data.inputTokens - data.cachedInputTokens : null;
     for (const [key, element] of Object.entries(refs.fields)) {
-      setText(element, key === "cacheRate" ? rate : key === "speed" ? speedText : key.endsWith("Ms") ? duration(turn?.[key], key === "averageTtftMs") : tokenValue(data[key]));
+      panelContentChanged = setText(element, key === "cacheRate" ? rate : key === "speed" ? speedText : key.endsWith("Ms") ? duration(turn?.[key], key === "averageTtftMs") : tokenValue(data[key])) || panelContentChanged;
     }
     const pendingNote = stale ? (stats ? "更新失败，当前数据可能已过期。" : "暂时无法读取统计，将自动重试。") : !currentSessionId ? "建立会话后显示统计。" : !stats ? "缺失数据以 — 显示。" : "";
     const sourceNote = unknownUsage ? "Token 统计范围未知。" : sessionUsage ? "会话累计用量，缓存已包含在输入中。" : "仅统计本次运行的用量。";
     const activityNote = turn ? "一次提问为一轮，步数为该轮模型生成次数。" : "暂无可识别的最近一轮。";
     const toolNote = finite(turn?.toolDurationMs) ? "工具用时为本轮累计值，并行调用可能重叠。" : "";
-    setText(refs.notes.activity, `${pendingNote}${activityNote}${toolNote}${speedNote}。`);
-    setText(refs.notes.tokens, `${pendingNote}${sourceNote}`);
+    panelContentChanged = setText(refs.notes.activity, `${pendingNote}${activityNote}${toolNote}${speedNote}。`) || panelContentChanged;
+    panelContentChanged = setText(refs.notes.tokens, `${pendingNote}${sourceNote}`) || panelContentChanged;
     setAttribute(refs.buttons.activity, "aria-label", `会话总轮数 ${count(data.turnCount)} 轮，最近一轮统计 ${count(turn?.stepCount)} 步，本轮平均速度 ${speedText}，${status}。${speedNote}。查看统计详情`);
     setAttribute(refs.buttons.tokens, "aria-label", `Token 用量，${scopeLabel} ${refs.total.textContent}，缓存命中 ${rate}，${status}。查看统计详情`);
     setValue(bar.dataset, "running", running ? "true" : "false");
     setValue(bar.dataset, "codeyState", state);
-    positionPanel();
+    // 内容与入口位置都未变化时，跳过浮层测量。
+    positionPanel(anchor, !panelContentChanged);
   };
 
   const schedulePoll = (delay) => {
