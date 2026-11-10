@@ -195,3 +195,134 @@ test("模型菜单重复刷新不重写未变化的属性，原生重绘后仍�
   await page.evaluate(() => window.__codeyModelWhitelistPatch.dispose());
   expect(errors).toEqual([]);
 });
+
+test("长会话中的模型发现只遍历前 600 个元素，仍能同步模型目录", async ({ page }) => {
+  await page.setContent(`<main>${"<span>输出</span>".repeat(20_000)}</main>`);
+  for (const name of ["codey-bridge", "model-request-gate"]) {
+    await page.addScriptTag({ content: readFileSync(new URL(`../../public/${name}.js`, import.meta.url), "utf8") });
+  }
+  await page.evaluate(() => {
+    const fixture = window.fixture = { wildcardElements: 0, visitedElements: 0, models: [] };
+    const queryKey = ["models", "list"];
+    let data = { data: [{ model: "stale" }] };
+    const queryClient = {
+      getQueriesData: () => [[queryKey, data]],
+      setQueryData: (_key, value) => { data = value; fixture.models = value.data.map(entry => entry.model); },
+      invalidateQueries: () => Promise.resolve(),
+    };
+    document.querySelectorAll("*")[550].__reactFiber$fixture = { memoizedProps: { queryClient } };
+    window.__codexSessionDeleteBridge = async () => ({ status: "ok", models: ["current"], default_model: "current" });
+    const queryAll = document.querySelectorAll.bind(document);
+    document.querySelectorAll = selector => {
+      const elements = queryAll(selector);
+      if (selector === "*") fixture.wildcardElements += elements.length;
+      return elements;
+    };
+    const createWalker = document.createTreeWalker.bind(document);
+    document.createTreeWalker = (...args) => {
+      const walker = createWalker(...args);
+      const next = walker.nextNode.bind(walker);
+      walker.nextNode = () => {
+        const node = next();
+        if (node && args[1] === NodeFilter.SHOW_ELEMENT) fixture.visitedElements += 1;
+        return node;
+      };
+      return walker;
+    };
+  });
+  await page.addScriptTag({ content: readFileSync(new URL("../../public/model-whitelist-inject.js", import.meta.url), "utf8") });
+  await page.evaluate(() => window.__codeyModelWhitelistPatch.refresh());
+  const result = await page.evaluate(() => window.fixture);
+  expect(result.models).toEqual(["current"]);
+  expect(result.wildcardElements).toBe(0);
+  expect(result.visitedElements).toBe(600);
+  await page.evaluate(() => window.__codeyModelWhitelistPatch.dispose());
+});
+
+test("持续输出不触发会话校准布局读取，切换会话仍立即校准", async ({ page }) => {
+  await page.setContent('<main><div data-turn-key="turn"><span id="output"></span></div><div data-above-composer-conversation-id="session-a" style="height:24px"></div></main>');
+  await page.evaluate(() => {
+    const fixture = window.fixture = { reconciled: [], layoutReads: 0 };
+    const setInterval = window.setInterval.bind(window);
+    window.setInterval = (callback, delay) => {
+      if (delay === 15_000) fixture.reconcileTick = callback;
+      return setInterval(callback, delay);
+    };
+    const getClientRects = Element.prototype.getClientRects;
+    Element.prototype.getClientRects = function () {
+      if (this.hasAttribute("data-above-composer-conversation-id")) fixture.layoutReads += 1;
+      return getClientRects.call(this);
+    };
+    window.__codexSessionDeleteBridge = async () => ({ status: "ok" });
+    window.__codeyCodexSessionController = {
+      kind: "manager",
+      async reconcileCompletedConversation({ conversationId }) {
+        fixture.reconciled.push(conversationId);
+        return true;
+      },
+    };
+  });
+  for (const content of sources) await page.addScriptTag({ content });
+  await expect.poll(() => page.evaluate(() => window.fixture.reconciled)).toEqual(["session-a"]);
+  const reads = await page.evaluate(async () => {
+    // Let installation and its mutations settle before exercising separate timer turns.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    window.fixture.layoutReads = 0;
+    const output = document.getElementById("output");
+    for (let index = 0; index < 8; index += 1) {
+      output.textContent = `输出 ${index}`;
+      const span = document.createElement("span");
+      span.textContent = "新段落";
+      output.append(span);
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+    return window.fixture.layoutReads;
+  });
+  expect(reads).toBe(0);
+  await page.evaluate(() => {
+    const nextTick = Date.now() + 15_001;
+    Date.now = () => nextTick;
+    window.fixture.reconcileTick();
+  });
+  await expect.poll(() => page.evaluate(() => window.fixture.reconciled)).toEqual(["session-a", "session-a"]);
+  await page.evaluate(() => {
+    const composer = document.querySelector("[data-above-composer-conversation-id]");
+    const replacement = composer.cloneNode();
+    replacement.setAttribute("data-above-composer-conversation-id", "session-b");
+    composer.replaceWith(replacement);
+  });
+  await expect.poll(() => page.evaluate(() => window.fixture.reconciled)).toEqual(["session-a", "session-a", "session-b"]);
+});
+
+test("轮次内的会话标识和可见性变化仍触发校准", async ({ page }) => {
+  await page.setContent('<main data-turn-key="turn"><div id="context" data-response-annotation-conversation="session-a" style="height:24px"></div></main>');
+  await page.evaluate(() => {
+    window.fixture = { reconciled: [] };
+    window.__codexSessionDeleteBridge = async () => ({ status: "ok" });
+    window.__codeyCodexSessionController = {
+      kind: "manager",
+      async reconcileCompletedConversation({ conversationId }) {
+        window.fixture.reconciled.push(conversationId);
+        return true;
+      },
+    };
+  });
+  for (const content of sources) await page.addScriptTag({ content });
+  const reconciled = () => page.evaluate(() => window.fixture.reconciled);
+  await expect.poll(reconciled).toEqual(["session-a"]);
+  await page.locator("#context").evaluate(node => node.setAttribute("data-response-annotation-conversation", "session-b"));
+  await expect.poll(reconciled).toEqual(["session-a", "session-b"]);
+  await page.evaluate(() => {
+    const wrapper = document.createElement("div");
+    wrapper.id = "wrapper";
+    wrapper.innerHTML = '<div data-session-id="session-c" style="height:24px"></div>';
+    document.querySelector("main").append(wrapper);
+  });
+  await expect.poll(reconciled).toEqual(["session-a", "session-b", "session-c"]);
+  await page.locator("#wrapper").evaluate(node => { node.hidden = true; });
+  await expect.poll(reconciled).toEqual(["session-a", "session-b", "session-c", "session-b"]);
+  await page.locator("#wrapper").evaluate(node => { node.hidden = false; });
+  await expect.poll(reconciled).toEqual(["session-a", "session-b", "session-c", "session-b", "session-c"]);
+  await page.locator("#wrapper").evaluate(node => node.remove());
+  await expect.poll(reconciled).toEqual(["session-a", "session-b", "session-c", "session-b", "session-c", "session-b"]);
+});

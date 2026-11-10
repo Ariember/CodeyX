@@ -132,18 +132,20 @@
     return [...document.querySelectorAll(selector)].find(isRenderedSessionElement);
   };
 
+  const sessionContextAttributes = [
+    // Codex keeps inactive conversations mounted. Prefer the visible
+    // composer, and never use an identifier from a hidden conversation.
+    "data-above-composer-conversation-id",
+    "data-session-id",
+    "data-conversation-id",
+    "data-thread-id",
+    "data-request-user-input-auto-resolution-conversation-id",
+    "data-response-annotation-conversation",
+  ];
+  const sessionContextSelector = sessionContextAttributes.map(attribute => `[${attribute}]`).join(", ");
+
   const getSessionId = () => {
-    const attributes = [
-      // Codex keeps inactive conversations mounted. Prefer the visible
-      // composer, and never use an identifier from a hidden conversation.
-      "data-above-composer-conversation-id",
-      "data-session-id",
-      "data-conversation-id",
-      "data-thread-id",
-      "data-request-user-input-auto-resolution-conversation-id",
-      "data-response-annotation-conversation",
-    ];
-    for (const attribute of attributes) {
+    for (const attribute of sessionContextAttributes) {
       const value = visibleSessionElement(`[${attribute}]`)?.getAttribute(attribute);
       if (value) return value.replace(/^local:/, "");
     }
@@ -1976,10 +1978,25 @@
     codeyTimed("codey-inject.sessionToolMutations", mutations?.length ?? 0, () => handleSessionToolMutationsImpl(mutations));
   const handleSessionToolMutationsImpl = (mutations) => {
     if (disposed) return;
+    let completionContextChanged = false;
     for (const mutation of mutations) {
       const target = mutation.target instanceof HTMLElement
         ? mutation.target
         : mutation.target?.parentElement;
+      if (!completionContextChanged && !isCodeyOwned(target)) {
+        const turn = target?.closest?.("[data-turn-key]");
+        // Message output cannot change the session unless its context markers change.
+        completionContextChanged = !turn || turn.isConnected === false
+          || (mutation.type === "attributes" && (
+            sessionContextAttributes.includes(mutation.attributeName)
+            || target?.matches?.(sessionContextSelector)
+            || target?.querySelector?.(sessionContextSelector)
+          ))
+          || [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])].some(node => (
+            node instanceof HTMLElement
+            && (node.matches?.(sessionContextSelector) || node.querySelector?.(sessionContextSelector))
+          ));
+      }
       if (mutation.type === "attributes") {
         if (target && !isCodeyOwned(target)) {
           const threadRow = target.closest?.(sidebarThreadRowSelector) || null;
@@ -2039,7 +2056,7 @@
     if (pendingScanRoots.size) {
       scheduleIncrementalScan(null);
     }
-    if (document.visibilityState === "hidden" || completionReconcileInFlight || completionReconcileTimer) return;
+    if (!completionContextChanged || document.visibilityState === "hidden" || completionReconcileInFlight || completionReconcileTimer) return;
     // Coalesce layout reads outside observer delivery without postponing navigation checks.
     completionReconcileTimer = window.setTimeout(() => {
       completionReconcileTimer = 0;
@@ -2050,10 +2067,11 @@
     attributes: true,
     attributeOldValue: true,
     attributeFilter: [
+      ...sessionContextAttributes,
       "aria-label",
       "aria-expanded",
       "aria-hidden",
-      "data-request-user-input-auto-resolution-conversation-id",
+      "data-app-action-sidebar-thread-active",
       "data-app-action-sidebar-thread-host-id",
       "data-app-action-sidebar-thread-id",
       "data-app-action-sidebar-thread-kind",

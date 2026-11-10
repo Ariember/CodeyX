@@ -441,7 +441,7 @@ async function loadPatch(
   const documentListeners = new Map();
   const mutationObserverInstalls = [];
   const dispatchedEvents = [];
-  let wildcardScanCount = 0;
+  let fullScanCount = 0;
   const body = documentBody || {};
   if (queryClient) {
     body.__reactFiber$codeyTest = {
@@ -461,13 +461,25 @@ async function loadPatch(
     createElement(tagName) {
       return documentBody ? new FakeElementCore(tagName) : null;
     },
+    createTreeWalker(root, whatToShow) {
+      if (whatToShow !== 1) return { nextNode: () => null };
+      fullScanCount += 1;
+      function* descendants(node) {
+        for (const child of node === document ? allDocumentRoots() : node.children || []) {
+          yield child;
+          yield* descendants(child);
+        }
+      }
+      const iterator = descendants(root);
+      return { nextNode: () => iterator.next().value ?? null };
+    },
     getElementById() {
       return allDocumentRoots()
         .map((root) => root.querySelector?.("[id]"))
         .find(Boolean) || null;
     },
     querySelectorAll(selector) {
-      if (selector === "*") wildcardScanCount += 1;
+      assert.notEqual(selector, "*", "model discovery must stop before enumerating the whole document");
       return documentBody ? body.querySelectorAll(selector) : [];
     },
     addEventListener(name, listener) {
@@ -585,8 +597,8 @@ async function loadPatch(
     dispatchedEvents() {
       return [...dispatchedEvents];
     },
-    wildcardScanCount() {
-      return wildcardScanCount;
+    fullScanCount() {
+      return fullScanCount;
     },
     mutationObserverInstalls() {
       return mutationObserverInstalls;
@@ -1044,7 +1056,7 @@ test("a backend-pushed catalog updates immediately without a nested bridge reque
   const { patch } = runtime;
   const eventsBeforePush = client.events.length;
 
-  assert.equal(patch.version, "74");
+  assert.equal(patch.version, "75");
   assert.equal(await patch.setCatalog({
     status: "ok",
     models: ["gpt-5.6-sol", "provider-hot-pushed"],
@@ -4086,25 +4098,25 @@ test("unchanged catalog retries and interactions do not repeat full React discov
   };
   const runtime = await loadPatch(catalog, [statsigClient()]);
 
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
   runtime.dispatchDocumentEvent("pointerdown");
   runtime.dispatchDocumentEvent("focusin");
   await Promise.resolve();
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
 
   await runtime.patch.setCatalog(catalog);
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
   assert.equal(runtime.patch.delivery().revision, 1);
 
   await runtime.runNextTimer();
   await runtime.runNextTimer();
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
 
   await runtime.patch.setCatalog({
     ...catalog,
     models: ["gpt-5.6-sol", "provider-new"],
   });
-  assert.equal(runtime.wildcardScanCount(), 2);
+  assert.equal(runtime.fullScanCount(), 2);
   assert.equal(runtime.patch.delivery().revision, 2);
   runtime.patch.dispose();
 });
@@ -4189,7 +4201,7 @@ test("picker event bursts discover replacement clients once after the input hand
   await runtime.runPendingTimers();
   assert.equal(graphVisits, 1);
   assert.deepEqual(nextClient.models(), ["current"]);
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
 
   graphVisits = 0;
   runtime.dispatchDocumentEvent("pointerdown", { target: modelButton });
@@ -4238,7 +4250,7 @@ test("ordinary clicks do not discover new React query clients", async () => {
   await runtime.runPendingTimers();
   assert.equal(graphVisits, 0);
   assert.deepEqual(nextClient.models(), ["old"]);
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
   runtime.patch.dispose();
 });
 
@@ -4282,7 +4294,7 @@ test("listbox picker discovers replacement clients exposed through React props",
   runtime.dispatchDocumentEvent("pointerdown", { target: trigger });
   await runtime.runPendingTimers();
   assert.deepEqual(nextClient.models(), ["current"]);
-  assert.equal(runtime.wildcardScanCount(), 1);
+  assert.equal(runtime.fullScanCount(), 1);
   runtime.patch.dispose();
 });
 
@@ -4319,7 +4331,7 @@ test("reopening the model picker discovers each replacement QueryClient", async 
 
   assert.deepEqual(secondReplacementQueryClient.models(), ["gpt-5.6-sol", routeModel]);
   assert.equal(
-    runtime.wildcardScanCount(),
+    runtime.fullScanCount(),
     1,
     "picker interaction should rediscover mounted roots without repeating the full document scan",
   );
@@ -4658,7 +4670,7 @@ test("an unchanged backend push supersedes an in-flight catalog refresh", async 
   catalogResponse = new Promise((resolve) => { resolveCatalog = resolve; });
   const staleRefresh = runtime.patch.refresh();
   const deliveryBeforePush = runtime.patch.delivery();
-  const scansBeforePush = runtime.wildcardScanCount();
+  const scansBeforePush = runtime.fullScanCount();
 
   assert.equal(await runtime.patch.setCatalog(currentCatalog), true);
   resolveCatalog({
@@ -4675,7 +4687,7 @@ test("an unchanged backend push supersedes an in-flight catalog refresh", async 
   });
   assert.deepEqual(queryClient.models(), ["provider-current"]);
   assert.equal(runtime.patch.delivery().revision, deliveryBeforePush.revision);
-  assert.equal(runtime.wildcardScanCount(), scansBeforePush);
+  assert.equal(runtime.fullScanCount(), scansBeforePush);
 
   catalogResponse = {
     status: "ok",
@@ -4718,12 +4730,12 @@ test("an unchanged catalog immediately repairs a stale picker without rescanning
   const runtime = await loadPatch(catalog, [statsigClient()], { queryClient });
   const [[queryKey]] = queryClient.getQueriesData({ queryKey: ["models", "list"] });
   queryClient.setQueryData(queryKey, { data: [modelDescriptor("stale")], nextCursor: null });
-  const scans = runtime.wildcardScanCount();
+  const scans = runtime.fullScanCount();
   const invalidations = queryClient.invalidations;
 
   assert.equal(await runtime.patch.setCatalog(catalog), true);
   assert.deepEqual(queryClient.models(), ["current"]);
-  assert.equal(runtime.wildcardScanCount(), scans);
+  assert.equal(runtime.fullScanCount(), scans);
   assert.equal(queryClient.invalidations, invalidations);
   assert.equal(runtime.patch.delivery().pendingQueryEntries, 0);
   runtime.patch.dispose();
@@ -5363,7 +5375,7 @@ test("composer trigger fallback stays inside popup buttons and handles historica
 test("composer trigger handles mounting, removal and hot reload without full scans", async () => {
   const body = new FakeElementCore("body", { connected: true });
   const runtime = await loadPatch(composerCatalog(), [statsigClient()], { documentBody: body });
-  const scans = runtime.wildcardScanCount();
+  const scans = runtime.fullScanCount();
   const { trigger, textNode } = composerModelTrigger(body, composerRouteModel);
   runtime.dispatchObserverMutations(body, [{ type: "childList", target: body, addedNodes: [trigger], removedNodes: [] }]);
   assert.equal(textNode.nodeValue, "[主] gpt-6-astra");
@@ -5375,7 +5387,7 @@ test("composer trigger handles mounting, removal and hot reload without full sca
   body.appendChild(trigger);
   runtime.dispatchObserverMutations(body, [{ type: "childList", target: body, addedNodes: [trigger], removedNodes: [] }]);
   assert.equal(textNode.nodeValue, "[主] gpt-6-astra");
-  assert.equal(runtime.wildcardScanCount(), scans);
+  assert.equal(runtime.fullScanCount(), scans);
   const previousObservers = [...runtime.mutationObserverInstalls()];
   runtime.patch.version = "previous";
   const nextPatch = await runtime.reload();
@@ -5499,7 +5511,7 @@ test("subagent headers survive React text updates and route renames", async () =
 test("subagent headers observe late mounts and release removed labels without scanning turns", async () => {
   const body = new FakeElementCore("body", { connected: true });
   const runtime = await loadPatch(subagentCatalog(), [statsigClient()], { documentBody: body });
-  const scans = runtime.wildcardScanCount();
+  const scans = runtime.fullScanCount();
   const { toolbar, header, label } = subagentHeader(body, `${subagentRouteModel} · 中`);
   runtime.dispatchObserverMutations(body, [{
     type: "childList", target: body, addedNodes: [toolbar], removedNodes: [],
@@ -5524,7 +5536,7 @@ test("subagent headers observe late mounts and release removed labels without sc
   }]);
   assert.equal(content.label.textContent, subagentRouteModel);
   assert.equal(runtime.mutationObserverInstalls().length, 3);
-  assert.equal(runtime.wildcardScanCount(), scans);
+  assert.equal(runtime.fullScanCount(), scans);
   runtime.patch.dispose();
 });
 

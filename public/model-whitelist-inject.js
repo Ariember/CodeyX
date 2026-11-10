@@ -1,6 +1,6 @@
 // Keep Codex's native model allowlist aligned with the current CodeyX channel.
 (() => {
-  const patchVersion = "74";
+  const patchVersion = "75";
   const nativeSelectionOnly = window.__codeyNativeModelSelectionOnly === true;
   const officialProviderId = "openai";
   const localRouterProviderId = "codey_router";
@@ -1791,7 +1791,12 @@
       ) || []),
     ].filter(Boolean);
     if (forceScan) {
-      nodes.push(...Array.from(document.querySelectorAll?.("*") || []).slice(0, 600));
+      const walker = document.createTreeWalker(document, 1);
+      for (let count = 0; count < 600; count += 1) {
+        const node = walker.nextNode();
+        if (!node) break;
+        nodes.push(node);
+      }
     }
     return nodes.filter((node, index, all) => all.indexOf(node) === index);
   };
