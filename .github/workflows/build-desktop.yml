@@ -125,7 +125,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-15
+            runner: macos-26
 
     steps:
       - name: Checkout Codey
@@ -237,7 +237,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-15
+            runner: macos-26
 
     steps:
       - name: Checkout Codey
@@ -558,7 +558,7 @@ jobs:
       - macos-check
       - windows
       - windows-check
-    runs-on: macos-15
+    runs-on: macos-26
 
     steps:
       - name: Checkout release metadata
