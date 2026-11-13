@@ -220,8 +220,8 @@ impl<'a> ResponsesSseRewriter<'a> {
         self.buffer.extend_from_slice(chunk);
         let mut output = Vec::new();
         while let Some(frame) = take_next_sse_frame(&self.buffer, &mut self.cursor) {
-            output.extend(
-                self.rewrite_frame(frame, &self.buffer[self.forwarded..self.cursor.consumed]),
+            output.extend_from_slice(
+                &self.rewrite_frame(frame, &self.buffer[self.forwarded..self.cursor.consumed]),
             );
             self.forwarded = self.cursor.consumed;
         }
@@ -238,16 +238,16 @@ impl<'a> ResponsesSseRewriter<'a> {
         let output = self.rewrite_frame(&buffer[self.cursor.consumed..], &buffer[self.forwarded..]);
         self.cursor = SseCursor::default();
         self.forwarded = 0;
-        output
+        output.into_owned()
     }
 
-    fn rewrite_frame(&self, frame: &[u8], original: &[u8]) -> Vec<u8> {
+    fn rewrite_frame<'b>(&self, frame: &[u8], original: &'b [u8]) -> Cow<'b, [u8]> {
         #[derive(serde::Deserialize)]
         struct EventKind<'a> {
             #[serde(rename = "type", borrow)]
             kind: Cow<'a, str>,
         }
-        let passthrough = || original.to_vec();
+        let passthrough = || Cow::Borrowed(original);
         let Ok(Some(data)) = sse_frame_data(frame) else {
             return passthrough();
         };
@@ -319,7 +319,7 @@ impl<'a> ResponsesSseRewriter<'a> {
             }
         }
         output.extend_from_slice(newline);
-        output
+        Cow::Owned(output)
     }
 }
 
@@ -461,6 +461,27 @@ mod tests {
         let mut cursor = SseCursor::default();
         let frame = take_next_sse_frame(bytes, &mut cursor).unwrap();
         serde_json::from_str(&sse_frame_data(frame).unwrap().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn responses_rewriter_borrows_unchanged_frames_and_owns_changed_frames() {
+        let input = b"id: one\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\r\n\r\n";
+        let fix = NativeResponseFix::default();
+        for response_fix in [None, Some(&fix)] {
+            let rewriter = ResponsesSseRewriter::new(response_fix, true, None);
+            let output = rewriter.rewrite_frame(input, input);
+            assert!(matches!(output, Cow::Borrowed(_)));
+            assert_eq!(output.as_ptr(), input.as_ptr());
+            assert_eq!(output.as_ref(), input);
+        }
+
+        let rewriter = ResponsesSseRewriter::new(None, true, None);
+        let error = b"event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request_error\",\"message\":\"invalid\"}}\n\n";
+        let output = rewriter.rewrite_frame(error, error);
+        assert!(matches!(output, Cow::Owned(_)));
+        let event = rewritten_event(&output);
+        assert_eq!(event["type"], "response.failed");
+        assert_eq!(event["response"]["error"]["message"], "invalid");
     }
 
     #[test]
