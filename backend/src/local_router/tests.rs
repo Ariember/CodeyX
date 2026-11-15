@@ -1414,6 +1414,145 @@ async fn websocket_rejected_message_reports_type_without_echoing_payload() {
 #[path = "steering_tests.rs"]
 mod steering_tests;
 
+#[tokio::test]
+async fn websocket_warmup_keeps_history_without_http_generation() {
+    for (protocol, supports_websockets) in [
+        (crate::config::UPSTREAM_PROTOCOL_OPENAI_RESPONSES, true),
+        (crate::config::UPSTREAM_PROTOCOL_OPENAI_RESPONSES, false),
+        (
+            crate::config::UPSTREAM_PROTOCOL_OPENAI_CHAT_COMPLETIONS,
+            false,
+        ),
+        (crate::config::UPSTREAM_PROTOCOL_ANTHROPIC_MESSAGES, false),
+        (crate::config::UPSTREAM_PROTOCOL_GEMINI, false),
+    ] {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let upstream_address = upstream.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&requests);
+        let upstream_task = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = upstream.accept().await.unwrap();
+                let request = read_http_request(&mut stream).await.unwrap();
+                if request.method == "GET" {
+                    write_json_response(&mut stream, 404, &json!({"error":"no websocket"}))
+                        .await
+                        .unwrap();
+                    continue;
+                }
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                assert!(body.get("generate").is_none(), "{protocol}: {body}");
+                captured.lock().unwrap().push(body);
+                let response = match protocol {
+                    crate::config::UPSTREAM_PROTOCOL_OPENAI_CHAT_COMPLETIONS => json!({
+                        "id":"chatcmpl-warmup", "choices":[{"index":0,
+                            "message":{"role":"assistant","content":"ok"}, "finish_reason":"stop"}]
+                    }),
+                    crate::config::UPSTREAM_PROTOCOL_ANTHROPIC_MESSAGES => json!({
+                        "id":"msg-warmup", "type":"message", "role":"assistant", "model":"provider-model",
+                        "content":[{"type":"text","text":"ok"}], "stop_reason":"end_turn"
+                    }),
+                    crate::config::UPSTREAM_PROTOCOL_GEMINI => json!({
+                        "candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]
+                    }),
+                    _ => {
+                        json!({"id":"resp-after-warmup","object":"response","status":"completed","output":[]})
+                    }
+                };
+                write_json_response(&mut stream, 200, &response)
+                    .await
+                    .unwrap();
+                break;
+            }
+        });
+        let (mut config, provider_id, model) =
+            router_config(format!("http://{upstream_address}/v1"));
+        config.profiles[0].upstream_protocol = protocol.into();
+        config.profiles[0].supports_websockets = supports_websockets;
+        config.profiles[0].normalize();
+        let router = LocalRouter::start(&config).await.unwrap();
+        let mut socket = connect_router_websocket(&router.endpoint()).await;
+        let alias = model_alias(&provider_id, &model);
+        let mut warmup = json!({
+            "type":"response.create", "model":alias, "stream_id":"warmup",
+            "generate":false, "input":[{"role":"user","content":"first-warmup-input"}]
+        });
+        warmup["generate"] = json!("false");
+        socket
+            .send(WebSocketMessage::Text(warmup.to_string().into()))
+            .await
+            .unwrap();
+        let rejected = read_router_websocket_until_terminal(&mut socket).await;
+        assert_eq!(
+            rejected.last().unwrap()["response"]["error"]["codey"]["errorCode"],
+            "invalid_generate"
+        );
+        warmup["generate"] = json!(false);
+        socket
+            .send(WebSocketMessage::Text(warmup.to_string().into()))
+            .await
+            .unwrap();
+        let events = read_router_websocket_until_terminal(&mut socket).await;
+        assert_eq!(events.len(), 2, "{protocol}: {events:?}");
+        assert_eq!(events[0]["type"], "response.created");
+        let response = &events[1]["response"];
+        assert_eq!(events[1]["type"], "response.completed");
+        assert_eq!(response["output"], json!([]));
+        assert_eq!(response["usage"]["total_tokens"], 0);
+        assert!(events.iter().all(|event| event["stream_id"] == "warmup"));
+        assert!(
+            requests.lock().unwrap().is_empty(),
+            "prewarm must not generate"
+        );
+
+        let native = protocol == crate::config::UPSTREAM_PROTOCOL_OPENAI_RESPONSES;
+        let mut input = vec![json!({"role":"user","content":"second-warmup-input"})];
+        if native {
+            input.extend([
+                json!({"type":"custom_tool_call","id":"ctc_server","call_id":"call_exec","name":"exec","input":"text(1)"}),
+                json!({"type":"custom_tool_call_output","id":"ctco_client","call_id":"call_exec",
+                    "output":[{"type":"input_text","text":"first part"},{"type":"input_text","text":"second part"}]}),
+            ]);
+        }
+        socket
+            .send(WebSocketMessage::Text(
+                json!({
+                    "type":"response.create", "model":alias, "generate":true,
+                    "previous_response_id":response["id"], "input":input,
+                    "tools":[{"type":"custom","name":"exec","format":{"type":"text"}}]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let completed = read_router_websocket_until_terminal(&mut socket).await;
+        assert_eq!(
+            completed.last().unwrap()["type"],
+            "response.completed",
+            "{protocol}: {completed:?}"
+        );
+        upstream_task.await.unwrap();
+        {
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            let body = &requests[0];
+            assert!(body.get("previous_response_id").is_none());
+            if native {
+                let mut expected = vec![warmup["input"][0].clone()];
+                expected.extend(input);
+                assert_eq!(body["input"], json!(expected));
+            } else {
+                let encoded = body.to_string();
+                assert_eq!(encoded.matches("first-warmup-input").count(), 1, "{body}");
+                assert_eq!(encoded.matches("second-warmup-input").count(), 1, "{body}");
+            }
+        }
+        socket.close(None).await.unwrap();
+        router.stop().await.unwrap();
+    }
+}
+
 #[allow(clippy::result_large_err)]
 #[tokio::test]
 async fn declared_responses_route_reuses_upstream_websocket() {
@@ -1500,8 +1639,18 @@ async fn declared_responses_route_reuses_upstream_websocket() {
     let alias = model_alias(&provider_id, &model);
     let mut socket = connect_router_websocket(&endpoint).await;
 
-    let first =
-        send_router_websocket_request_on_stream(&mut socket, &alias, "first", Some("main")).await;
+    socket
+        .send(WebSocketMessage::Text(
+            json!({
+                "type":"response.create", "model":alias, "input":"first",
+                "stream_id":"main", "generate":false,
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let first = read_router_websocket_until_terminal(&mut socket).await;
     let second = send_router_websocket_request(&mut socket, &alias, "second").await;
     assert_eq!(first.last().unwrap()["type"], "response.completed");
     assert_eq!(second.last().unwrap()["type"], "response.completed");
@@ -1513,6 +1662,7 @@ async fn declared_responses_route_reuses_upstream_websocket() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["type"], "response.create");
     assert_eq!(requests[0]["model"], model);
+    assert_eq!(requests[0]["generate"], false);
     assert!(requests[0].get("stream").is_none());
     assert!(requests[0].get("background").is_none());
     assert!(requests[0].get("stream_id").is_none());

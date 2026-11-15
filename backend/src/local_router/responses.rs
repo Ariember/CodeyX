@@ -1,5 +1,17 @@
 use super::*;
 
+fn websocket_warmup_response(id: &str, model: &str) -> Value {
+    json!({
+        "id": id,
+        "object": "response",
+        "created_at": current_unix_timestamp(),
+        "status": "completed",
+        "model": model,
+        "output": [],
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+    })
+}
+
 impl RouterServer {
     pub(crate) async fn handle_connection(
         &self,
@@ -1223,6 +1235,20 @@ impl RouterServer {
                             .await?;
                         continue;
                     }
+                    if body
+                        .get("generate")
+                        .is_some_and(|value| !value.is_boolean())
+                    {
+                        downstream
+                            .write_error(
+                                400,
+                                "invalid_generate",
+                                "Responses WebSocket 的 generate 字段必须为布尔值".to_string(),
+                                None,
+                            )
+                            .await?;
+                        continue;
+                    }
                     if let Some(body) = body.as_object_mut() {
                         // These are HTTP transport fields. The shared proxy
                         // path restores `stream = true` only for an HTTP/SSE
@@ -1600,6 +1626,8 @@ impl RouterServer {
         D: ResponsesDownstream + ?Sized,
     {
         let downstream_websocket = downstream.is_websocket();
+        let websocket_warmup =
+            downstream_websocket && body.get("generate") == Some(&Value::Bool(false));
         let compacting = is_compaction_request(&body, request_kind);
         if downstream_websocket {
             debug_assert_eq!(request_kind, ResponsesRequestKind::Create);
@@ -1829,6 +1857,12 @@ impl RouterServer {
                 )
                 .await?;
             return Ok(());
+        }
+        if websocket_warmup && bridge != ProtocolBridge::NativeResponses {
+            let response_id = format!("resp_codey_{}", Uuid::new_v4());
+            let response = websocket_warmup_response(&response_id, &resolved.upstream_model);
+            downstream.remember_adapted_response(&response_id, &[])?;
+            return downstream.write_json(200, &response).await;
         }
         let restoring_adapted_history = bridge == ProtocolBridge::NativeResponses
             && has_codey_synthetic_previous_response_id(&body);
@@ -2319,6 +2353,19 @@ impl RouterServer {
                 .as_ref()
                 .is_some_and(|alias| alias.alias_history(&mut upstream_body))
             {
+                body_mutated = true;
+                encoded_body = None;
+            }
+            if websocket_warmup {
+                // HTTP 没有预热语义；保留已暂存的历史，不能把预热变成实际生成。
+                return downstream.write_json(200, &websocket_warmup_response(
+                    &format!("resp_warmup_{}", Uuid::new_v4()),
+                    &resolved.upstream_model,
+                )).await;
+            }
+            if upstream_body.as_object_mut()
+                .expect("validated Responses body must remain an object")
+                .remove("generate").is_some() {
                 body_mutated = true;
                 encoded_body = None;
             }
