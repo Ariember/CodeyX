@@ -73,6 +73,24 @@ async function reopenSettings(page) {
   await page.getByRole("button", { name: "线路与模型", exact: true }).click();
 }
 
+test("关闭设置移除宿主，重开复用内容且不会被旧关闭回调隐藏", async ({ page }) => {
+  await openSettings(page);
+  await page.evaluate(() => {
+    window.savedOverlayHost = document.getElementById("codey-settings-overlay-host");
+    window.__codeySettingsOverlay.close();
+  });
+  await expect(page.locator("#codey-settings-overlay-host")).toHaveCount(0);
+  await reopenSettings(page);
+  expect(await page.evaluate(() => document.getElementById("codey-settings-overlay-host") === window.savedOverlayHost)).toBe(true);
+  await page.evaluate(async () => {
+    window.__codeySettingsOverlay.close();
+    window.__codeySettingsOverlay.open();
+    await new Promise(resolve => setTimeout(resolve, 500));
+  });
+  await expect(page.locator("#codey-settings-overlay-host")).toBeVisible();
+  await expect(page.getByRole("button", { name: "关闭配置", exact: true })).toBeVisible();
+});
+
 test("草稿跨页面保留，保存等待期间禁止重复操作，完成后重新打开仍为已保存值", async ({ page }) => {
   const toggle = await openSettings(page, "pending");
   const before = await storedConfig(page);

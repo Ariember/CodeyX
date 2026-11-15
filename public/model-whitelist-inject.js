@@ -1,6 +1,6 @@
 // Keep Codex's native model allowlist aligned with the current CodeyX channel.
 (() => {
-  const patchVersion = "75";
+  const patchVersion = "76";
   const nativeSelectionOnly = window.__codeyNativeModelSelectionOnly === true;
   const officialProviderId = "openai";
   const localRouterProviderId = "codey_router";
@@ -1447,8 +1447,14 @@
     const element = groupedMenuElement(node);
     if (!element || element.closest?.("[data-turn-key]")) return;
     observeSubagentModelLabel(element);
-    for (const label of element.querySelectorAll?.(subagentModelLabelSelector) || []) {
-      observeSubagentModelLabel(label);
+    const roots = element.closest?.("[class*='h-toolbar-pane']")
+      ? [element]
+      : Array.from(element.querySelectorAll?.("[class*='h-toolbar-pane']") || []);
+    for (const root of roots) {
+      if (root.closest?.("[data-turn-key]")) continue;
+      for (const label of root.querySelectorAll?.(subagentModelLabelSelector) || []) {
+        observeSubagentModelLabel(label);
+      }
     }
   };
 
@@ -1782,7 +1788,7 @@
   };
 
   const reactModelStateNodes = (forceScan = false) => {
-    const nodes = [
+    const primary = [
       document.body,
       document.documentElement,
       document.getElementById?.("root"),
@@ -1790,15 +1796,17 @@
         "[role='menu'], [role='dialog'], [role='listbox'], [data-radix-popper-content-wrapper]",
       ) || []),
     ].filter(Boolean);
+    const seen = new Set(primary);
+    const primaryCount = seen.size;
     if (forceScan) {
       const walker = document.createTreeWalker(document, 1);
       for (let count = 0; count < 600; count += 1) {
         const node = walker.nextNode();
         if (!node) break;
-        nodes.push(node);
+        seen.add(node);
       }
     }
-    return nodes.filter((node, index, all) => all.indexOf(node) === index);
+    return { nodes: [...seen], primaryCount };
   };
 
   const scanReactObjectGraph = (forceScan = false, discover = false) =>
@@ -1815,6 +1823,7 @@
       };
     }
     const queryClients = new Set(knownModelQueryClients);
+    const initialClientCount = queryClients.size;
     const visited = new WeakSet();
     let visitedCount = 0;
 
@@ -1881,7 +1890,10 @@
       }
     };
 
-    for (const node of reactModelStateNodes(forceScan)) {
+    const { nodes, primaryCount } = reactModelStateNodes(forceScan);
+    for (let index = 0; index < nodes.length; index += 1) {
+      if (index >= primaryCount && queryClients.size > initialClientCount) break;
+      const node = nodes[index];
       for (const key of reactFiberKeys(node)) {
         let root;
         try {

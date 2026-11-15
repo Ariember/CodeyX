@@ -1252,6 +1252,32 @@ test("ignores unrelated DOM mutations while the composer remains connected", asy
   assert.equal(env.getComposerQueryCount(), queryCount);
 });
 
+test("ignores unrelated insertions on a common ancestor of the composer", async () => {
+  const env = createEnvironment();
+  await flush();
+  const ancestor = env.scope.parentElement;
+  const querySelector = ancestor.querySelector;
+  ancestor.querySelector = (selector) => selector === "[data-above-composer-conversation-id]"
+    ? env.anchor : querySelector.call(ancestor, selector);
+  const unrelated = new FakeElement("aside");
+  ancestor.appendChild(unrelated);
+  const before = env.getComposerQueryCount();
+  const measurements = await env.measureGeometryAfter(() => {
+    env.emitMutation([{ type: "childList", target: ancestor, addedNodes: [unrelated], removedNodes: [] }]);
+  }, 280);
+  assert.equal(measurements, 0);
+  assert.equal(env.getComposerQueryCount(), before);
+});
+
+test("mounted optimize buttons follow scroll without geometry measurements", async () => {
+  const env = createEnvironment();
+  await flush();
+  const button = env.getElementById("codey-prompt-optimize-button");
+  assert.equal(button.style.display, "inline-flex");
+  assert.equal(await env.measureGeometryAfter(() => env.emitWindowEvent("scroll")), 0);
+  assert.ok(await env.measureGeometryAfter(() => env.emitWindowEvent("resize")) > 0);
+});
+
 test("coalesces input and observer text reads without forcing layout during event delivery", async () => {
   const env = createEnvironment({ anchors: false, newChatComposer: true });
   await flush();

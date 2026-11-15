@@ -14,7 +14,7 @@ test("扩展页面将编辑、比对、确认和筛选事件接到 controller", 
   const action = name => (...args) => { calls.push([name, ...args]); };
   const controller = {
     inventory: { revision: "r1", warnings: [] }, scope: { kind: "user" }, entries: [], filtered: [], currentPage: { entries: [], page: 1, pages: 1 },
-    selected: [], query: "", filter: "all", source: "all", sort: "name", projectPath: "", projectMode: false,
+    selected: [], query: "", filter: "all", source: "all", sort: "name", projectPath: "", projectMode: false, canSelectPage: true, deselectPage: true,
     draft: { kind: "mcp", id: "fixture", content: "{}", isNew: true }, comparison: { content: "latest", revision: "r2" },
     confirmation: { title: "确认", description: "fixture" }, discard: null, busy: false, loading: false, saving: false, error: "", notice: "", noticeSeq: 0,
     ...Object.fromEntries(["refresh", "changeMode", "setProjectPath", "pickProject", "changeScope", "setQuery", "setFilter", "setSource", "setSort", "clearFilters", "selectPage", "selectEntry", "onAction", "changeDraft", "save", "closeDraft", "pickSkill", "loadLatest", "adoptComparison", "cancelConfirmation", "confirmAction"].map(name => [name, action(name)])),
@@ -23,6 +23,9 @@ test("扩展页面将编辑、比对、确认和筛选事件接到 controller", 
     stubs: { ...common, "./useExtensionsPageController": { useExtensionsPageController: options => { assert.equal(options.active, true); assert.equal(typeof options.onDownload, "function"); return controller; } } },
   });
   const tree = graph.exports.CodexExtensionsPage({ kind: "mcp", active: true });
+  const selectionButton = collectElements(tree, node => elementType(node) === ui.Button && textContent(node) === "取消本页")[0];
+  assert.equal(elementProps(selectionButton).disabled, false);
+  elementProps(selectionButton).onClick();
   const editor = propsOf(tree, "ExtensionEditor");
   editor.onChange({ content: "draft" }); editor.onSave(); editor.onCancel(); editor.onPick(); editor.onReload();
   const filters = propsOf(tree, "ExtensionFilters"); filters.onQuery("query"); filters.onClear();
@@ -31,7 +34,7 @@ test("扩展页面将编辑、比对、确认和筛选事件接到 controller", 
   propsOf(tree, "ConfirmationDialog").onConfirm();
   const compare = collectElements(tree, node => elementType(node) === ui.Button && textContent(node).includes("已比对"))[0];
   elementProps(compare).onClick();
-  assert.deepEqual(calls.map(call => call[0]), ["changeDraft", "save", "closeDraft", "pickSkill", "loadLatest", "setQuery", "clearFilters", "changeMode", "changeScope", "pickProject", "onAction", "selectEntry", "confirmAction", "adoptComparison"]);
+  assert.deepEqual(calls.map(call => call[0]), ["selectPage", "changeDraft", "save", "closeDraft", "pickSkill", "loadLatest", "setQuery", "clearFilters", "changeMode", "changeScope", "pickProject", "onAction", "selectEntry", "confirmAction", "adoptComparison"]);
 });
 
 test("缓存弹窗将读取、刷新和确认删除接到 controller，删除时禁止关闭", () => {

@@ -25,7 +25,15 @@ test("file validation checks JSON object and UTF-8 byte limit", () => {
   assert.equal(validatePluginConfigText('{ "unknown": [1, true] }\n'), undefined);
   for (const text of ["", "{", "null", "[]", "1"]) assert.ok(validatePluginConfigText(text));
   assert.ok(validatePluginConfigText(JSON.stringify({ text: "中".repeat(400000) })));
-  assert.equal(validatePluginConfigText('{"x":"' + "a".repeat(1024 * 1024 - 8) + '"}'), undefined);
+  const limit = 1024 * 1024;
+  for (const character of ["a", "中", "😀"]) {
+    const bytes = Buffer.byteLength(character);
+    const content = JSON.stringify({ x: character.repeat(Math.floor((limit - 8) / bytes)) })
+      + " ".repeat((limit - 8) % bytes);
+    assert.equal(Buffer.byteLength(content), limit);
+    assert.equal(validatePluginConfigText(content), undefined);
+    assert.match(validatePluginConfigText(content + " "), /1 MiB/);
+  }
 });
 
 test("comments support nested objects and arrays without interpreting description contents", () => {

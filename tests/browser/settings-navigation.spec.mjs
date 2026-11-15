@@ -40,6 +40,20 @@ for (const theme of ["light", "dark"]) {
       await page.keyboard.press("Enter");
       await expect(backup).toBeFocused();
       await expect(page.locator(".settings-page").and(page.getByRole("region", { name: "备份与恢复", exact: true }))).toBeVisible();
+      for (const [key, title] of [
+        ["ArrowDown", "内置工具"],
+        ["Home", "基础功能"],
+        ["ArrowLeft", "Skill 管理"],
+        ["ArrowRight", "基础功能"],
+        ["End", "Skill 管理"],
+        ["ArrowUp", "MCP 管理"],
+      ]) {
+        await page.keyboard.press(key);
+        const button = menu.getByRole("button", { name: title, exact: true });
+        await expect(button).toBeFocused();
+        await expect(button).toHaveAttribute("aria-current", "page");
+        await expect(page.locator(".settings-page").and(page.getByRole("region", { name: title, exact: true }))).toBeVisible();
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       expect(errors).toEqual([]);
     });

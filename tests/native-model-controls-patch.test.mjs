@@ -849,8 +849,12 @@ test("starting or restarting Codex replaces the old runtime with one managed by 
     /runtime_generation\.load\(Ordering::Acquire\) == runtime_generation/,
   );
   assert.match(
-    launcherModules,
-    /stop_macos_codex\([\s\S]*?inspector_argument,[\s\S]*?&self\.codex_app_path,[\s\S]*?self\.process_id,[\s\S]*?self\.process_group_id/,
+    launcherSource,
+    /stop_macos_codex\(inspector_argument, app_dir, process_id, process_group_id\)/,
+  );
+  assert.match(
+    launcherSource,
+    /stop_codex_processes\(\s*&self\.codex_app_path,\s*self\.current_process_id\(\),\s*#\[cfg\(unix\)\]\s*self\.process_group_id,\s*#\[cfg\(target_os = "macos"\)\]\s*self\.inspector_argument\.as_deref\(\)/,
   );
   // Any Codex install can hold Electron's single-instance lock, so the
   // pre-launch stop sweeps every instance instead of one executable path.

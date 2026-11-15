@@ -115,6 +115,13 @@ pub(super) struct Activity {
     pub(super) usage_snapshot: Option<ConversationStatsSnapshot>,
 }
 
+fn line_may_contain_activity_record(line: &[u8]) -> bool {
+    memchr::memmem::find(line, b"event_msg").is_some()
+        || memchr::memmem::find(line, b"session_meta").is_some()
+        || memchr::memmem::find(line, b"token_usage_record").is_some()
+        || memchr::memmem::find(line, b"\\u").is_some()
+}
+
 impl Activity {
     pub fn read_append(&mut self, path: &Path, session_id: &str) -> std::io::Result<()> {
         let mut file = std::fs::File::open(path)?;
@@ -124,7 +131,7 @@ impl Activity {
             self.last_read_start = self.offset;
             self.last_read_bytes = 0;
         }
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
         let mut line = Vec::new();
         loop {
             // 单行保留上限 8 MiB，超大工具输出按块跳过。未写完的末行下次再读。
@@ -136,7 +143,10 @@ impl Activity {
                 let buf = reader.fill_buf()?;
                 if buf.is_empty() {
                     // 完整 JSON 可以暂时没有换行；不推进偏移，追加后仍重新校验。
-                    if !oversized && let Ok(record) = serde_json::from_slice::<Value>(&line) {
+                    if !oversized
+                        && line_may_contain_activity_record(&line)
+                        && let Ok(record) = serde_json::from_slice::<Value>(&line)
+                    {
                         self.record(&record, session_id);
                     }
                     return Ok(());
@@ -160,7 +170,10 @@ impl Activity {
                 }
             }
             self.offset = start + consumed;
-            if !oversized && let Ok(record) = serde_json::from_slice::<Value>(&line) {
+            if !oversized
+                && line_may_contain_activity_record(&line)
+                && let Ok(record) = serde_json::from_slice::<Value>(&line)
+            {
                 self.record(&record, session_id);
             }
         }
@@ -386,6 +399,30 @@ mod tests {
         assert_eq!(snapshot.total_tokens, Some(123));
         assert_eq!(snapshot.turn_count, Some(2));
         assert_eq!(snapshot.last_turn.unwrap().id, "next");
+        assert_eq!(activity.offset, file.as_file().metadata().unwrap().len());
+    }
+
+    #[test]
+    fn append_reader_keeps_activity_records_among_unrelated_jsonl() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let records = [
+            r#"{"type": "session_meta", "payload": {"id": "own"}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","content":[{"text":"hello"}]}}"#,
+            r#"{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn"}}"#,
+            r#"{"type":"token_usage_record","payload":{"session_id":"own","turn_id":"turn","response_id":"response","thread_token_usage":{"total_tokens":42}}}"#,
+            r#"{"type":"response_item","payload":{"type":"function_call_output","output":"done"}}"#,
+        ];
+        std::fs::write(file.path(), records.join("\n") + "\n").unwrap();
+        assert!(!line_may_contain_activity_record(records[1].as_bytes()));
+        assert!(!line_may_contain_activity_record(records[4].as_bytes()));
+
+        let mut activity = Activity::default();
+        activity.read_append(file.path(), "own").unwrap();
+        let mut snapshot = activity.usage_snapshot.clone().unwrap();
+        activity.apply(&mut snapshot);
+        assert_eq!(snapshot.total_tokens, Some(42));
+        assert_eq!(snapshot.turn_count, Some(1));
+        assert_eq!(snapshot.last_turn.unwrap().step_count, Some(1));
         assert_eq!(activity.offset, file.as_file().metadata().unwrap().len());
     }
 

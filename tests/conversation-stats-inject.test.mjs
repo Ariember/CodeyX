@@ -418,6 +418,37 @@ test("streaming content and visibility changes inside a turn do not rescan the c
   } finally { env.dispose(); }
 });
 
+test("stats reuse visible composer inputs and rediscover them after replacement", async () => {
+  const env = createEnvironment({ manualTimers: true, statsBySession: { "conversation-1": STATS } });
+  try {
+    env.runTimer(0);
+    await flushTimers(0);
+    const querySelectorAll = env.scope.querySelectorAll.bind(env.scope);
+    let scans = 0;
+    env.scope.querySelectorAll = (selector) => {
+      if (selector === "textarea, [contenteditable='true'], [role='textbox']") scans += 1;
+      return querySelectorAll(selector);
+    };
+    env.refresh();
+    env.runTimer(0);
+    await flushTimers(0);
+    assert.equal(scans, 0);
+    env.textarea.remove();
+    const replacement = env.document.createElement("textarea");
+    env.scope.appendChild(replacement);
+    env.refresh();
+    env.runTimer(0);
+    await flushTimers(0);
+    assert.equal(scans, 1);
+    assert.equal(env.bar().hidden, false);
+    replacement.visible = false;
+    env.refresh();
+    env.runTimer(0);
+    await flushTimers(0);
+    assert.equal(env.bar().hidden, true);
+  } finally { env.dispose(); }
+});
+
 test("unchanged rescans do not rewrite attributes and changed values update immediately", async () => {
   const env = createEnvironment({ manualTimers: true, statsBySession: { "conversation-1": STATS } });
   try {
@@ -914,7 +945,7 @@ test("centers the details immediately above the trigger and clamps the viewport"
   await flushTimers(30);
   summary(env).getBoundingClientRect = () => ({ left: 200, top: 700, width: 400, height: 28 });
   panel(env).getBoundingClientRect = () => ({ width: 420, height: 300 });
-  env.textarea.getBoundingClientRect = () => ({ left: 100, top: 520, width: 600, height: 140 });
+  env.textarea.getBoundingClientRect = () => ({ left: 100, top: 520, right: 700, bottom: 660, width: 600, height: 140 });
   click(summary(env));
   assert.equal(panel(env).style.left, "190px");
   assert.equal(panel(env).style.top, "392px");

@@ -128,6 +128,7 @@ fn child_tools_require_turn_context_model_attestation_and_cache_success() {
                 "payload": {"turn_id": turn_id, "model": model, "effort": effort}
             }));
         }
+        records.push(json!({"type":"response_item","payload":{"type":"function_call_output","output":"unrelated tool output"}}));
         fs::write(
             &path,
             records
@@ -1720,6 +1721,7 @@ fn resumed_root_recovers_binding_from_its_aborted_turn_without_cancelling_childr
         let mut records = vec![
             json!({"type": "session_meta", "payload": {"id": meta_id, "source": source}}),
             json!({"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": aborted_turn}}),
+            json!({"type":"response_item","payload":{"type":"message","content":[{"text":"continue"}]}}),
             json!({"type": "event_msg", "payload": {"type": "task_started", "turn_id": started_turn}}),
         ];
         if completed {

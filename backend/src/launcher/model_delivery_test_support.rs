@@ -32,6 +32,8 @@ impl CodeyRuntime {
             injection_websocket_url: Arc::new(RwLock::new(Arc::from(websocket_url))),
             child: Arc::new(Mutex::new(None)),
             process_id: None,
+            #[cfg(windows)]
+            tracked_process_id: None,
             #[cfg(unix)]
             process_group_id: None,
             #[cfg(target_os = "macos")]
@@ -46,4 +48,17 @@ impl CodeyRuntime {
             local_router,
         }
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn runtime_process_id_follows_the_desktop_handoff() {
+    let mut runtime = CodeyRuntime::for_model_delivery_test(CodeyConfig::default(), "", None);
+    runtime.process_id = Some(10);
+    assert_eq!(runtime.current_process_id(), Some(10));
+    let tracked = Arc::new(std::sync::atomic::AtomicU32::new(20));
+    runtime.tracked_process_id = Some(Arc::clone(&tracked));
+    assert_eq!(runtime.current_process_id(), Some(20));
+    tracked.store(30, Ordering::Release);
+    assert_eq!(runtime.current_process_id(), Some(30));
 }

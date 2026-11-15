@@ -159,7 +159,7 @@ test("范围切换保护草稿，取消保留项目模式，确认后才读取�
   assert.equal(h.render().projectMode, false);
 });
 
-test("筛选与分页变更重置选择，批量仅提交可操作项并绑定清单版本", async () => {
+test("筛选变更重置分页和选择，批量仅提交可操作项并绑定清单版本", async () => {
   const h = await loaded("skill", inventory("r1", { skills: [
     ...Array.from({ length: 25 }, (_, i) => skill(`item-${String(i).padStart(2, "0")}`)),
     skill("cached", { ownership: "plugin", scope: "plugin" }), skill("readonly", { readOnly: true }),
@@ -181,6 +181,35 @@ test("筛选与分页变更重置选择，批量仅提交可操作项并绑定�
   assert.deepEqual(h.render().selected, []);
   h.render().clearFilters();
   assert.equal(h.render().query, "");
+});
+
+test("本页选择跨页累加，达到 100 项时可取消部分选中的页并保留其他页", async () => {
+  const h = await loaded("skill", inventory("r1", { skills: Array.from({ length: 140 }, (_, i) =>
+    skill(`item-${String(i).padStart(3, "0")}`)) }));
+  for (let i = 0; i < 10; i++) h.render().selectEntry(`item-${String(i).padStart(3, "0")}`);
+  for (let page = 2; page <= 6; page++) {
+    h.render().setPage(page);
+    assert.equal(h.render().canSelectPage, true);
+    h.render().selectPage();
+  }
+  assert.equal(h.render().selected.length, 100);
+  assert.equal(h.render().deselectPage, true);
+  assert.equal(h.render().canSelectPage, true);
+  assert.ok(h.render().selected.includes("item-000"));
+  h.render().setPage(7);
+  assert.equal(h.render().canSelectPage, false);
+  h.render().selectPage();
+  assert.equal(h.render().selected.length, 100);
+  h.render().setPage(6);
+  h.render().selectPage();
+  assert.equal(h.render().selected.length, 90);
+  assert.ok(h.render().selected.every(id => id < "item-100"));
+  assert.equal(h.render().deselectPage, false);
+  h.render().setPage(2);
+  assert.equal(h.render().deselectPage, true);
+  h.render().selectPage();
+  assert.equal(h.render().selected.length, 70);
+  assert.ok(h.render().selected.includes("item-000"));
 });
 
 test("启停、测试和删除保留确认与能力检查，未知动作不发送请求", async () => {

@@ -243,6 +243,10 @@ export function useExtensionsPageController({ kind, active, request = extensionR
   const currentPage = pageResources(filtered, page);
   const enableTargets = batchTargets(entries, selected, true);
   const disableTargets = batchTargets(entries, selected, false);
+  const pageToggleIds = currentPage.entries.filter(canToggle).map(entry => entry.id);
+  const selectedIds = new Set(selected);
+  const canSelectMoreOnPage = selected.length < 100 && pageToggleIds.some(id => !selectedIds.has(id));
+  const deselectPage = !canSelectMoreOnPage && pageToggleIds.some(id => selectedIds.has(id));
   const batch = useStableEvent((enabled: boolean) => {
     if (!available() || unavailable) return;
     const ids = enabled ? enableTargets : disableTargets;
@@ -252,7 +256,11 @@ export function useExtensionsPageController({ kind, active, request = extensionR
       action: { action: kind === "mcp" ? "set_mcps_enabled" : "set_skills_enabled", ids, enabled, revision: inventory?.revision, confirmed: true } });
   });
   const selectPage = useStableEvent(() => {
-    if (available() && !unavailable) setSelected(currentPage.entries.filter(canToggle).map(entry => entry.id));
+    if (!available() || unavailable) return;
+    const pageIds = new Set(pageToggleIds);
+    setSelected(current => deselectPage
+      ? current.filter(id => !pageIds.has(id))
+      : [...new Set([...current, ...pageToggleIds])].slice(0, 100));
   });
   const selectEntry = useStableEvent((id: string) => {
     if (!available() || unavailable || !entries.some(entry => entry.id === id && canToggle(entry))) return;
@@ -265,7 +273,7 @@ export function useExtensionsPageController({ kind, active, request = extensionR
     saving: ["save_mcp", "save_skill", "create_skill", "install_skill"].includes(controller.busyAction),
     refresh, query, filter, source, sort, setQuery, setFilter, setSource, setSort, setPage,
     clearFilters: () => { setQuery(""); setFilter("all"); setSource("all"); },
-    selected, entries, filtered, currentPage, canSelectPage: currentPage.entries.some(canToggle), selectPage, selectEntry,
+    selected, entries, filtered, currentPage, canSelectPage: canSelectMoreOnPage || deselectPage, deselectPage, selectPage, selectEntry,
     clearSelection: () => setSelected([]), canEnable: enableTargets.length > 0, canDisable: disableTargets.length > 0, batch,
     projectMode, projectPath, setProjectPath, changeMode, changeScope, pickProject, pickSkill,
     draft, changeDraft, startDraft, closeDraft, save, loadLatest, comparison, adoptComparison,

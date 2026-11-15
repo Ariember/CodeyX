@@ -41,6 +41,29 @@ async function openModels(page, mode) {
   return route;
 }
 
+test("官方模型支持搜索和清空，空结果不误报目录缺失或添加自定义模型", async ({ page }) => {
+  await openModels(page, "normal");
+  const route = await page.evaluate(async () => {
+    const { config } = await window.__codexSessionDeleteBridge("/api/load_codey_config", {});
+    return config.profiles.find(profile => profile.authMode === "officialAccount" && profile.enabled !== false);
+  });
+  await page.getByLabel(`同步 ${route.name} 模型`, { exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "配置当前线路支持的模型", exact: true });
+  const search = dialog.getByRole("textbox", { name: "搜索模型", exact: true });
+  await expect(search).toBeEnabled();
+  const models = dialog.getByRole("checkbox", { name: /^当前线路支持 / });
+  const initialCount = await models.count();
+  expect(initialCount).toBeGreaterThan(0);
+  await search.fill("no-such-official-model");
+  await search.press("Enter");
+  await expect(models).toHaveCount(0);
+  await expect(dialog.getByText("未找到匹配的官方模型", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("暂未读取到当前账号可用模型", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "添加", exact: true })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "清空搜索", exact: true }).click();
+  await expect(models).toHaveCount(initialCount);
+});
+
 test("手动模型保存防重，失败保留选择，重试后线路展示已保存模型", async ({ page }) => {
   const route = await openModels(page, "fail-first");
   await page.getByLabel(`同步 ${route.name} 模型`, { exact: true }).click();

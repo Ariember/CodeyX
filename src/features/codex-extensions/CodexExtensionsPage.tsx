@@ -208,9 +208,10 @@ function CodexExtensionsPageComponent({
               size="xs"
               variant="outline"
               disabled={unavailable || !controller.canSelectPage}
+              title={!unavailable && !controller.canSelectPage && selected.length >= 100 ? "最多同时选择 100 项" : undefined}
               onClick={controller.selectPage}
             >
-              选择本页可操作项
+              {controller.deselectPage ? "取消本页" : "选择本页可操作项"}
             </Button>
             {selected.length > 0 && (
               <>

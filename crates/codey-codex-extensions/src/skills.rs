@@ -24,6 +24,11 @@ pub struct SourceFile {
 }
 
 pub fn metadata(content: &[u8]) -> Result<(String, String)> {
+    let (name, description, _) = metadata_with_version(content)?;
+    Ok((name, description))
+}
+
+fn metadata_with_version(content: &[u8]) -> Result<(String, String, Option<String>)> {
     ensure!(
         content.len() as u64 <= fsutil::MAX_FILE,
         "Skill 文件超过大小限制"
@@ -74,7 +79,16 @@ pub fn metadata(content: &[u8]) -> Result<(String, String)> {
         !desc.trim().is_empty() && desc.len() <= 4096,
         "Skill description 为空或过长"
     );
-    Ok((name.to_owned(), desc.to_owned()))
+    let version = value
+        .get("version")
+        .or_else(|| value.get("metadata")?.get("version"))
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| value.as_number().map(ToString::to_string))
+        });
+    Ok((name.to_owned(), desc.to_owned(), version))
 }
 
 pub fn id(manifest: &Path) -> String {
@@ -97,10 +111,9 @@ pub fn entries(
         let is_system = scope == "system" || manifest.components().any(|c| c.as_os_str() == ".system");
         let ownership = if scope == "plugin" { "plugin" } else if is_system { "builtin" } else if registry.contains_key(path) && !linked { "managed" } else { "external" };
         let readonly = ownership == "plugin" || ownership == "builtin";
-        let parsed = cache.read(&manifest).and_then(|bytes| metadata(bytes.context("Skill 文件已消失")?));
-        let (name, description, error) = match parsed { Ok((n,d)) => (n,d,None), Err(e) => (path.file_name().unwrap_or_default().to_string_lossy().into_owned(), String::new(), Some(e.to_string())) };
+        let parsed = cache.read(&manifest).and_then(|bytes| metadata_with_version(bytes.context("Skill 文件已消失")?));
+        let (name, description, version, error) = match parsed { Ok((n,d,v)) => (n,d,v,None), Err(e) => (path.file_name().unwrap_or_default().to_string_lossy().into_owned(), String::new(), None, Some(e.to_string())) };
         let effective_scope = if is_system { "system" } else { scope };
-        let version = if error.is_none() { cache.read(&manifest).ok().flatten().and_then(manifest_version) } else { None };
         let (dependencies, dependency_warnings) = dependencies(path, cache);
         let mut entry = json!({"id":id(&manifest),"name":name,"description":description,"enabled":!disabled.contains(&fsutil::real_path(&manifest)),"enabledKnown":ownership != "plugin","sourcePath":path,"manifestPath":manifest,"scope":effective_scope,"ownership":ownership,"origin":registry.get(path).map(|m|m.source.as_str()).unwrap_or(""),"readOnly":readonly,"updatedAt":fsutil::updated_at(&manifest),"configurationStatus":if error.is_none(){"valid"}else{"invalid"},"version":version,"dependencies":dependencies,"dependencyWarnings":dependency_warnings,"canEdit":!readonly && ownership == "managed" && fsutil::writable(&manifest),"canToggle":!readonly,"canRemove":!readonly && !linked && path != root && fsutil::writable(path),"canCheck":true,"linkTarget":link_target});
         if readonly { entry["reason"] = json!(if scope == "plugin" { "插件缓存资源，仅展示，不代表当前会话已加载" } else { "Codex 系统资源不可修改" }); }
@@ -108,23 +121,6 @@ pub fn entries(
         if let Some(error) = error { entry["error"] = json!(error); }
         entry
     }).collect()
-}
-
-fn manifest_version(bytes: &[u8]) -> Option<String> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    let yaml = text
-        .strip_prefix("---\n")
-        .or_else(|| text.strip_prefix("---\r\n"))?
-        .split("\n---")
-        .next()?;
-    let value: Value = serde_yaml::from_str(yaml).ok()?;
-    let version = value
-        .get("version")
-        .or_else(|| value.get("metadata")?.get("version"))?;
-    version
-        .as_str()
-        .map(str::to_owned)
-        .or_else(|| version.as_number().map(ToString::to_string))
 }
 
 /// 列出一个根目录下所有可解析 Skill 的名称与清单路径，用于同范围重名检查。

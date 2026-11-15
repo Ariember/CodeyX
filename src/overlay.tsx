@@ -206,7 +206,6 @@ if (!window.__codeySettingsOverlay) {
   modalContainer.style.position = "fixed";
   modalContainer.style.width = "100%";
   shadow.append(rootElement, modalContainer);
-  getOverlayMountTarget().appendChild(host);
   const theme = installOverlayTheme([rootElement, modalContainer]);
 
   let hideTimer: number | undefined;
@@ -215,8 +214,11 @@ if (!window.__codeySettingsOverlay) {
   const hide = () => {
     window.clearTimeout(hideTimer);
     hideTimer = undefined;
+    if (visible) return;
     host.style.display = "none";
     host.setAttribute("aria-hidden", "true");
+    // 关闭时移出文档，避免隐藏的 ShadowRoot 样式仍参与宿主样式失效计算。
+    host.remove();
   };
   const reactRoot = ReactDOM.createRoot(rootElement);
   const render = (visible: boolean) => {

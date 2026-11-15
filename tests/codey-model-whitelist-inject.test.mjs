@@ -1056,7 +1056,7 @@ test("a backend-pushed catalog updates immediately without a nested bridge reque
   const { patch } = runtime;
   const eventsBeforePush = client.events.length;
 
-  assert.equal(patch.version, "75");
+  assert.equal(patch.version, "76");
   assert.equal(await patch.setCatalog({
     status: "ok",
     models: ["gpt-5.6-sol", "provider-hot-pushed"],
@@ -4176,6 +4176,32 @@ test("query discovery stops at a recognized client instead of walking its caches
   runtime.patch.dispose();
 });
 
+test("query discovery stops scanning peripheral fibers after finding a client on primary roots", async () => {
+  const body = new FakeElementCore("body", { connected: true });
+  const content = body.appendChild(new FakeElementCore("section"));
+  let visits = 0;
+  content.__reactFiber$peripheral = new Proxy({}, {
+    ownKeys() { visits += 1; return []; },
+  });
+  const queryClient = activeModelQueryClient(["stale"]);
+  const runtime = await loadPatch({ status: "ok", models: ["current"] },
+    [statsigClient()], { documentBody: body, queryClient });
+  assert.deepEqual(queryClient.models(), ["current"]);
+  assert.equal(visits, 0);
+  runtime.patch.dispose();
+});
+
+test("query discovery still finds a client below primary roots", async () => {
+  const body = new FakeElementCore("body", { connected: true });
+  const content = body.appendChild(new FakeElementCore("section"));
+  const queryClient = activeModelQueryClient(["stale"]);
+  content.__reactFiber$peripheral = { memoizedProps: { queryClient } };
+  const runtime = await loadPatch({ status: "ok", models: ["current"] },
+    [statsigClient()], { documentBody: body });
+  assert.deepEqual(queryClient.models(), ["current"]);
+  runtime.patch.dispose();
+});
+
 test("picker event bursts discover replacement clients once after the input handlers return", async (t) => {
   let now = Date.now();
   t.mock.method(Date, "now", () => now);
@@ -5477,6 +5503,19 @@ test("mounted subagent headers use catalog labels without a startup resource pat
   runtime.patch.dispose();
   assert.equal(label.textContent, raw);
   assert.equal(observer.observer.disconnected, true);
+});
+
+test("subagent label discovery only queries labels inside toolbars", async () => {
+  const body = new FakeElementCore("body", { connected: true });
+  const { label } = subagentHeader(body, subagentRouteModel);
+  const querySelectorAll = body.querySelectorAll.bind(body);
+  body.querySelectorAll = (selector) => {
+    assert.notEqual(selector, "[class*='max-w-1/2']");
+    return querySelectorAll(selector);
+  };
+  const runtime = await loadPatch(subagentCatalog(), [statsigClient()], { documentBody: body });
+  assert.equal(label.textContent, "[官1] gpt-6-luna");
+  runtime.patch.dispose();
 });
 
 test("subagent headers survive React text updates and route renames", async () => {

@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode, type RefObject } from "react";
+import { useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   IconBook2,
   IconDatabaseExport,
@@ -49,6 +49,24 @@ export function SettingsLayout({ hidden = false, sections, sidebarFooter, conten
     setActivePage(page);
   }
 
+  function handleMenuKeyDown(event: KeyboardEvent<HTMLButtonElement>, page: SettingsPageId) {
+    const index = SETTINGS_PAGES.findIndex((entry) => entry.id === page);
+    let nextIndex: number;
+    switch (event.key) {
+      case "Home": nextIndex = 0; break;
+      case "End": nextIndex = SETTINGS_PAGES.length - 1; break;
+      case "ArrowDown":
+      case "ArrowRight": nextIndex = (index + 1) % SETTINGS_PAGES.length; break;
+      case "ArrowUp":
+      case "ArrowLeft": nextIndex = (index + SETTINGS_PAGES.length - 1) % SETTINGS_PAGES.length; break;
+      default: return;
+    }
+    event.preventDefault();
+    const nextPage = SETTINGS_PAGES[nextIndex];
+    selectPage(nextPage.id);
+    event.currentTarget.closest("nav")?.querySelectorAll<HTMLButtonElement>(".settings-nav-item")[nextIndex]?.focus();
+  }
+
   return (
     <div className="settings-layout" hidden={hidden}>
       <nav className="settings-sidebar" aria-label="配置功能菜单">
@@ -67,6 +85,7 @@ export function SettingsLayout({ hidden = false, sections, sidebarFooter, conten
                     aria-current={activePage === page.id ? "page" : undefined}
                     aria-controls={`${id}-page-${page.id}`}
                     onClick={() => selectPage(page.id)}
+                    onKeyDown={(event) => handleMenuKeyDown(event, page.id)}
                   >
                     <Icon size={16} stroke={1.8} aria-hidden="true" />
                     <span>{page.title}</span>

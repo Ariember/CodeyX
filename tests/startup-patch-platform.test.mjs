@@ -184,7 +184,7 @@ test("Windows startup patch requires app-server runtime override validation", as
   assert.match(windowsSpawn, /install_startup_patch_with_cli_fallback\(/);
   assert.match(
     windowsSpawn,
-    /match startup_result \{\s*Ok\(mode\) => \{\s*spawned\.startup_injection_mode = mode\.as_str\(\)\.to_string\(\);\s*\(spawned\.performance_status, spawned\.performance_detail\) =\s*mode\.performance_status\(fuses\)/,
+    /match startup_result \{\s*Ok\(mode\) => \{\s*let _ = spawned_codex_alive\(&mut spawned\)\.await;\s*spawned\.startup_injection_mode = mode\.as_str\(\)\.to_string\(\);\s*\(spawned\.performance_status, spawned\.performance_detail\) =\s*mode\.performance_status\(fuses\)/,
   );
   assert.match(launcherPlatform, /child_command\.envs\(environment/);
   assert.match(launcherPlatform, /needs_packaged_environment\.then_some\(environment\.as_slice\(\)\)/);

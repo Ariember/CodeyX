@@ -1021,11 +1021,15 @@ pub(crate) fn prepare_cached_catalog_for_current_capabilities(
     image_detail_original_models: &[String],
     remote_compaction_models: &[String],
 ) -> Result<bool> {
-    if !is_available(home) {
+    let Some(value) = read_catalog_value(&home.join(relative_path())) else {
+        return Ok(false);
+    };
+    let mut models = catalog_models_from_value(&value);
+    if !runtime_compatible_models(&models) {
         return Ok(false);
     }
+    drop(value);
 
-    let mut models = read_runtime_catalog_models(home)?;
     let original_models = models.clone();
     apply_remote_compaction_models(&mut models, remote_compaction_models);
     let allowed_model_keys = native_web_search_models
@@ -1044,9 +1048,10 @@ pub(crate) fn prepare_cached_catalog_for_current_capabilities(
         prepare_cached_context_window(model);
         changed |= *model != previous;
     }
-    if changed {
-        write_catalog(home, &models)?;
+    if !changed {
+        return Ok(true);
     }
+    write_catalog(home, &models)?;
 
     let written_models = read_runtime_catalog_models(home)?;
     let mut safely_gated_models = written_models.clone();

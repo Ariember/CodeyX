@@ -286,6 +286,8 @@ pub struct CodeyRuntime {
     injection_websocket_url: Arc<RwLock<Arc<str>>>,
     child: Arc<Mutex<Option<Child>>>,
     process_id: Option<u32>,
+    #[cfg(windows)]
+    tracked_process_id: Option<Arc<std::sync::atomic::AtomicU32>>,
     #[cfg(unix)]
     process_group_id: Option<u32>,
     #[cfg(target_os = "macos")]
@@ -1185,7 +1187,7 @@ async fn inject_initial_renderer(
     handler: codey_runtime_core::bridge::BridgeHandler,
     injection_scripts: &cdp::PreparedInjectionScripts,
     app_dir: &std::path::Path,
-    spawned: &SpawnedCodex,
+    spawned: &mut SpawnedCodex,
     child: &Arc<Mutex<Option<Child>>>,
     restore_context: RuntimeConfigRestoreContext<'_>,
 ) -> Result<cdp::InjectedTarget> {
@@ -1200,6 +1202,11 @@ async fn inject_initial_renderer(
         Ok(target) => return Ok(target),
         Err(failure) => failure,
     };
+    #[cfg(windows)]
+    if let Some(process) = &mut spawned.startup_process {
+        let _ = process.refresh();
+        spawned.process_id = Some(process.process_id());
+    }
     let error_message = format!("{failure:#}");
     let failure_detail = failure.detail().map(str::to_string);
     let failure_metadata = error_log::FailureMetadata {
@@ -1491,6 +1498,8 @@ struct RuntimeWatcherInputs {
     injection_scripts: cdp::PreparedInjectionScripts,
     child: Arc<Mutex<Option<Child>>>,
     process_id: Option<u32>,
+    #[cfg(windows)]
+    startup_process: Option<WindowsStartupProcess>,
     protect_crashpad_pending: bool,
     crashpad_pending_stats: CrashpadPendingStatsHandle,
 }
@@ -1879,7 +1888,7 @@ async fn spawn_and_inject_runtime(
         handler.clone(),
         injection_scripts,
         &storage.app_dir,
-        &spawned,
+        &mut spawned,
         &child,
         RuntimeConfigRestoreContext {
             home,
@@ -1913,6 +1922,8 @@ fn spawn_runtime_watchers(inputs: RuntimeWatcherInputs) -> RuntimeWatchers {
         injection_scripts,
         child,
         process_id,
+        #[cfg(windows)]
+        startup_process,
         protect_crashpad_pending,
         crashpad_pending_stats,
     } = inputs;
@@ -1930,7 +1941,7 @@ fn spawn_runtime_watchers(inputs: RuntimeWatcherInputs) -> RuntimeWatchers {
         spawn_crashpad_guard_watcher(crashpad_guard_enabled.clone(), crashpad_pending_stats);
     #[cfg(windows)]
     let (exit_watchdog_shutdown, codex_exit, exit_watchdog_task) =
-        spawn_codex_exit_watcher(child, process_id, codex_exited);
+        spawn_codex_exit_watcher(child, process_id, startup_process, codex_exited);
     #[cfg(not(windows))]
     let (exit_watchdog_shutdown, codex_exit, exit_watchdog_task) =
         spawn_codex_exit_watcher(child, codex_exited);
@@ -2234,6 +2245,11 @@ impl CodeyRuntime {
         #[cfg(target_os = "macos")]
         let inspector_argument = spawned.inspector_argument.clone();
         let process_id = spawned.process_id;
+        #[cfg(windows)]
+        let tracked_process_id = spawned
+            .startup_process
+            .as_ref()
+            .map(WindowsStartupProcess::tracked_process_id);
         let RuntimeWatchers {
             injection_statuses,
             injection_websocket_url,
@@ -2252,6 +2268,8 @@ impl CodeyRuntime {
             injection_scripts: injection_scripts.clone(),
             child: child.clone(),
             process_id,
+            #[cfg(windows)]
+            startup_process: spawned.startup_process,
             protect_crashpad_pending: config.protect_crashpad_pending,
             crashpad_pending_stats,
         });
@@ -2272,6 +2290,8 @@ impl CodeyRuntime {
                 injection_websocket_url,
                 child,
                 process_id,
+                #[cfg(windows)]
+                tracked_process_id,
                 #[cfg(unix)]
                 process_group_id: spawned.process_group_id,
                 #[cfg(target_os = "macos")]
@@ -2289,17 +2309,27 @@ impl CodeyRuntime {
         ))
     }
 
+    fn current_process_id(&self) -> Option<u32> {
+        #[cfg(windows)]
+        if let Some(tracked) = &self.tracked_process_id {
+            return Some(tracked.load(Ordering::Acquire));
+        }
+        self.process_id
+    }
+
     #[cfg(windows)]
     pub async fn prepare_for_restart(&self) -> Result<()> {
         let websocket_url = self.injection_websocket_url.read().await.clone();
-        restart::prepare(self.process_id, &websocket_url)
+        restart::prepare(self.current_process_id(), &websocket_url)
             .await
             .context("无法确认 Codex 已正常退出，已取消重启以保护尚未保存的设置")
     }
 
     #[cfg(windows)]
     pub(crate) fn main_process_is_running(&self) -> Result<bool> {
-        let process_id = self.process_id.context("无法确认 Codex 主进程身份")?;
+        let process_id = self
+            .current_process_id()
+            .context("无法确认 Codex 主进程身份")?;
         codey_runtime_core::windows_process_is_running(process_id)
     }
 
@@ -2307,7 +2337,7 @@ impl CodeyRuntime {
         self.stop_with_cleanup(
             stop_codex_processes(
                 &self.codex_app_path,
-                self.process_id,
+                self.current_process_id(),
                 #[cfg(unix)]
                 self.process_group_id,
                 #[cfg(target_os = "macos")]
@@ -2349,7 +2379,7 @@ impl CodeyRuntime {
                 format!("{error:#}"),
                 serde_json::json!({
                     "appPath": self.codex_app_path,
-                    "processId": self.process_id,
+                    "processId": self.current_process_id(),
                 }),
             );
             return Err(error.context("清理 Codex 遗留进程失败"));

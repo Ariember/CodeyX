@@ -236,13 +236,13 @@ function ModelPickerDialogComponent({
             aria-label="当前线路支持 auto-review"
           />
         </div>}
-        {!officialOnly && <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center gap-2">
           <Input
             className="min-w-0 flex-1"
             value={customModelInput}
             onChange={(event) => onCustomModelInputChange(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !isBusy && customModelInput.trim()) {
+              if (!officialOnly && event.key === "Enter" && !isBusy && customModelInput.trim()) {
                 event.preventDefault();
                 onAddCustomModel();
               }
@@ -259,7 +259,7 @@ function ModelPickerDialogComponent({
                 <IconX size={12} aria-hidden="true" />
               </button>
             ) : undefined}
-            placeholder="搜索模型，或输入模型 ID 添加"
+            placeholder={officialOnly ? "搜索模型" : "搜索模型，或输入模型 ID 添加"}
             spellCheck={false}
             aria-label={officialOnly ? "搜索模型" : "搜索或添加模型"}
             aria-invalid={Boolean(modelInputError)}
@@ -274,7 +274,7 @@ function ModelPickerDialogComponent({
               <Plus size={16} aria-hidden="true" />
               添加
             </Button>}
-        </div>}
+        </div>
         {modelInputError && (
           <p className="mt-1.5 text-[11px] leading-[1.45] text-[var(--codey-red,#d70015)]" role="alert">{modelInputError}</p>
         )}
@@ -354,8 +354,12 @@ function ModelPickerDialogComponent({
           {!loading && officialOnly && filteredOfficialModels.length === 0 && (
             <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
               <IconCpu size={20} className="mb-2.5 text-[var(--codey-subtle,#86868b)]" aria-hidden="true" />
-              <strong className="text-xs font-semibold text-[var(--codey-text,#1d1d1f)]">暂未读取到当前账号可用模型</strong>
-              <p className="mt-1 text-[11px] leading-relaxed text-[var(--codey-subtle,#86868b)]">请关闭弹窗后重新同步官方线路。</p>
+              <strong className="text-xs font-semibold text-[var(--codey-text,#1d1d1f)]">
+                {officialModelCatalog.length === 0 ? "暂未读取到当前账号可用模型" : "未找到匹配的官方模型"}
+              </strong>
+              <p className="mt-1 text-[11px] leading-relaxed text-[var(--codey-subtle,#86868b)]">
+                {officialModelCatalog.length === 0 ? "请关闭弹窗后重新同步官方线路。" : "可更换关键词或清空搜索条件。"}
+              </p>
             </div>
           )}
           {!loading && !officialOnly && <div

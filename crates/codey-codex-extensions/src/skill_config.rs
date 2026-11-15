@@ -27,10 +27,17 @@ fn rules(doc: &DocumentMut) -> Result<Vec<Table>> {
         .collect()
 }
 
+pub struct SkillConfigSummary {
+    pub disabled: Vec<PathBuf>,
+    pub named: BTreeSet<String>,
+    pub unknown_paths: BTreeSet<PathBuf>,
+}
+
 /// Codex 按真实路径匹配规则，经链接或目标路径写成的规则等价；返回的路径均已解析。
-pub fn disabled(doc: &DocumentMut) -> Result<(Vec<PathBuf>, BTreeSet<String>)> {
+pub fn summary(doc: &DocumentMut) -> Result<SkillConfigSummary> {
     let mut disabled = Vec::new();
     let mut named = BTreeSet::new();
+    let mut unknown_paths = BTreeSet::new();
     for rule in rules(doc)? {
         if let Some(name) = rule.get("name").and_then(Item::as_str) {
             named.insert(name.to_owned());
@@ -38,23 +45,27 @@ pub fn disabled(doc: &DocumentMut) -> Result<(Vec<PathBuf>, BTreeSet<String>)> {
         if let Some(path) = rule.get("path").and_then(Item::as_str) {
             let path = fsutil::real_path(Path::new(path));
             disabled.retain(|p| p != &path);
-            if rule.get("enabled").and_then(Item::as_bool) == Some(false) {
-                disabled.push(path);
+            if let Some(enabled) = rule.get("enabled") {
+                match enabled.as_bool() {
+                    Some(false) => disabled.push(path),
+                    None => {
+                        unknown_paths.insert(path);
+                    }
+                    Some(true) => {}
+                }
             }
         }
     }
-    Ok((disabled, named))
+    Ok(SkillConfigSummary {
+        disabled,
+        named,
+        unknown_paths,
+    })
 }
 
-pub fn unknown_paths(doc: &DocumentMut) -> Result<BTreeSet<PathBuf>> {
-    Ok(rules(doc)?
-        .iter()
-        .filter(|rule| rule.get("enabled").is_some_and(|v| v.as_bool().is_none()))
-        .filter_map(|rule| {
-            let path = rule.get("path").and_then(Item::as_str)?;
-            Some(fsutil::real_path(Path::new(path)))
-        })
-        .collect())
+pub fn disabled(doc: &DocumentMut) -> Result<(Vec<PathBuf>, BTreeSet<String>)> {
+    let parsed = summary(doc)?;
+    Ok((parsed.disabled, parsed.named))
 }
 
 pub fn set_enabled(doc: &mut DocumentMut, path: &str, enabled: bool) -> Result<()> {

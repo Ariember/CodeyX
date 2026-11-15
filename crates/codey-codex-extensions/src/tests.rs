@@ -964,6 +964,21 @@ fn inline_tables_roundtrip() {
 }
 
 #[test]
+fn skill_config_summary_preserves_rule_order_and_unknown_states() {
+    for text in [
+        "skills = { config = [{path='/test/a/SKILL.md', enabled=false}, {path='/test/a/SKILL.md', enabled=true}, {path='/test/b/SKILL.md', enabled='unknown'}, {path='/test/b/SKILL.md', enabled=false}, {name='named', enabled=false}] }",
+        "[[skills.config]]\npath='/test/a/SKILL.md'\nenabled=false\n[[skills.config]]\npath='/test/a/SKILL.md'\nenabled=true\n[[skills.config]]\npath='/test/b/SKILL.md'\nenabled='unknown'\n[[skills.config]]\npath='/test/b/SKILL.md'\nenabled=false\n[[skills.config]]\nname='named'\nenabled=false\n",
+    ] {
+        let doc = mcp::parse(Some(text.as_bytes())).unwrap();
+        let summary = skill_config::summary(&doc).unwrap();
+        let path = fsutil::real_path(Path::new("/test/b/SKILL.md"));
+        assert_eq!(summary.disabled, vec![path.clone()]);
+        assert_eq!(summary.unknown_paths, BTreeSet::from([path]));
+        assert_eq!(summary.named, BTreeSet::from(["named".to_owned()]));
+    }
+}
+
+#[test]
 fn skill_toggle_preserves_rule_shape_unknown_fields_and_duplicates() {
     for text in [
         "# root comment\nskills = { config = [{path='/test/SKILL.md', enabled=false, future='one'}, {path='/test/SKILL.md', enabled=false, future='two'}] }\n",
@@ -1752,6 +1767,29 @@ fn large_bodies_reject_before_parsing_or_locking() {
         assert!(error.contains("大小限制"));
     }
     assert!(!f.data.exists());
+}
+
+#[test]
+fn skill_inventory_preserves_version_formats() {
+    for (version, expected) in [
+        (
+            "version: '2.3.4'\nmetadata:\n  version: ignored",
+            json!("2.3.4"),
+        ),
+        ("version: 2", json!("2")),
+        ("metadata:\n  version: '1.2.3'", json!("1.2.3")),
+        ("", Value::Null),
+    ] {
+        let f = Fixture::new("");
+        let content =
+            format!("---\nname: versioned\ndescription: Version fixture\n{version}\n---\n");
+        let created = f
+            .mutate(json!({"action":"create_skill","content":content}))
+            .unwrap();
+        let entry = &created["inventory"]["skills"][0];
+        assert_eq!(entry["version"], expected);
+        assert_eq!(entry["configurationStatus"], "valid");
+    }
 }
 
 #[test]

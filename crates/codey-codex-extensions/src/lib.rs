@@ -116,13 +116,20 @@ impl ExtensionService {
             .transpose()
             .context("托管 Skill 记录损坏，拒绝修改")?
             .unwrap_or_default();
+        let user_config_path = self.codex_home.join("config.toml");
+        let parsed_user_doc;
         let user_doc = if matches!(scope, Scope::User) {
-            doc.clone()
+            &doc
         } else {
-            mcp::parse(cache.read(&self.codex_home.join("config.toml"))?)?
+            parsed_user_doc = mcp::parse(cache.read(&user_config_path)?)?;
+            &parsed_user_doc
         };
-        let (disabled, named) = skill_config::disabled(&user_doc)?;
-        let unknown_paths = skill_config::unknown_paths(&user_doc)?;
+        let skill_config::SkillConfigSummary {
+            disabled,
+            named,
+            unknown_paths,
+        } = skill_config::summary(user_doc)?;
+        let skill_config_writable = fsutil::writable(&user_config_path);
         let mut warnings = vec!["当前会话和 Codey 启动参数可能覆盖这里的配置。".to_owned()];
         let mut roots = match scope {
             Scope::User => vec![
@@ -154,7 +161,7 @@ impl ExtensionService {
                         entry[key] = json!(false);
                     }
                 }
-                if !fsutil::writable(&self.codex_home.join("config.toml")) {
+                if !skill_config_writable {
                     entry["canToggle"] = json!(false);
                 }
                 if seen.insert(entry["id"].as_str().unwrap().to_owned()) {
@@ -168,7 +175,7 @@ impl ExtensionService {
             cache.read(&config_path)?.map(fsutil::digest),
         )];
         for path in [
-            self.codex_home.join("config.toml"),
+            user_config_path.clone(),
             self.registry_path(),
             self.shared_mcp_path(),
             self.mcp_scheduler_settings_path(),
@@ -248,6 +255,8 @@ impl ExtensionService {
         }
         let revision = fsutil::digest(&serde_json::to_vec(&fingerprints)?);
         let mut mcps = mcp::list(&doc, &config_path.to_string_lossy())?;
+        let mcp_updated_at = json!(fsutil::updated_at(&config_path));
+        let mcp_writable = fsutil::writable(&config_path);
         for entry in &mut mcps {
             entry["sharing"] = self.mcp_sharing(&config_path, entry["id"].as_str().unwrap())?;
             entry["scope"] = json!(if matches!(scope, Scope::User) {
@@ -255,8 +264,8 @@ impl ExtensionService {
             } else {
                 "project"
             });
-            entry["updatedAt"] = json!(fsutil::updated_at(&config_path));
-            if !fsutil::writable(&config_path) {
+            entry["updatedAt"] = mcp_updated_at.clone();
+            if !mcp_writable {
                 entry["readOnly"] = json!(true);
                 entry["reason"] = json!("配置文件或所在目录不可写");
                 for key in ["canEdit", "canToggle", "canRemove"] {
@@ -265,7 +274,7 @@ impl ExtensionService {
             }
         }
         Ok(
-            json!({"scope":scope,"configPath":config_path,"skillConfigPath":self.codex_home.join("config.toml"),"revision":revision,"mcpSchedulerEnabled":self.mcp_scheduler_enabled()?,"mcps":mcps,"skills":entries,"warnings":warnings,"applyNotice":"MCP 保存后自动刷新 Codex 配置；Skill 变更请在新会话中确认。当前 Codey 启动覆盖可能优先生效。"}),
+            json!({"scope":scope,"configPath":config_path,"skillConfigPath":user_config_path,"revision":revision,"mcpSchedulerEnabled":self.mcp_scheduler_enabled()?,"mcps":mcps,"skills":entries,"warnings":warnings,"applyNotice":"MCP 保存后自动刷新 Codex 配置；Skill 变更请在新会话中确认。当前 Codey 启动覆盖可能优先生效。"}),
         )
     }
 

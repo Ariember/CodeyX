@@ -218,7 +218,9 @@ impl RolloutParseState {
                 break;
             }
             consumed += segment.len();
-            if let Ok(record) = serde_json::from_str::<Value>(line) {
+            if self.line_may_affect_state(line)
+                && let Ok(record) = serde_json::from_str::<Value>(line)
+            {
                 self.apply(&record);
             }
             if self.is_subagent {
@@ -226,6 +228,29 @@ impl RolloutParseState {
             }
         }
         consumed
+    }
+
+    fn line_may_affect_state(&self, line: &str) -> bool {
+        let bytes = line.as_bytes();
+        if memchr::memmem::find(bytes, b"\\u").is_some() {
+            return true;
+        }
+        if memchr::memmem::find(bytes, b"session_meta").is_some()
+            || memchr::memmem::find(bytes, b"turn_context").is_some()
+            || memchr::memmem::find(bytes, b"event_msg").is_some()
+        {
+            return true;
+        }
+        if memchr::memmem::find(bytes, b"function_call").is_some()
+            && (memchr::memmem::find(bytes, b"request_").is_some()
+                || memchr::memmem::find(bytes, b"exec_command").is_some()
+                || ((!self.waiting_calls.is_empty() || !self.async_questions.is_empty())
+                    && memchr::memmem::find(bytes, b"function_call_output").is_some()))
+        {
+            return true;
+        }
+        !self.async_questions.is_empty()
+            && memchr::memmem::find(bytes, b"send_user_message_question_reply").is_some()
     }
 
     fn advance(&mut self, chunk: &str, consumed: usize) {
@@ -1156,6 +1181,26 @@ mod tests {
             pending_approvals_in_rollout(rollout),
             vec![("turn-1".to_string(), "pending".to_string())]
         );
+    }
+
+    #[test]
+    fn rollout_prefilter_keeps_pending_call_resolution() {
+        let mut state = RolloutParseState::default();
+        let ordinary = r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"ordinary","output":"done"}}"#;
+        assert!(!state.line_may_affect_state(ordinary));
+        state.consume(concat!(
+            "{\"type\": \"turn_context\", \"payload\": {\"turn_id\": \"turn\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"request_user_input\",\"call_id\":\"ask\"}}\n",
+        ));
+        assert!(state.line_may_affect_state(ordinary));
+        state.consume(&format!("{ordinary}\n"));
+        assert_eq!(
+            state.pending_approvals(),
+            vec![("turn".into(), "ask".into())]
+        );
+        state.consume("{\"type\": \"response_item\", \"payload\": {\"type\": \"function_call_output\", \"call_id\": \"ask\"}}\n");
+        assert!(state.pending_approvals().is_empty());
+        assert!(!state.line_may_affect_state(ordinary));
     }
 
     #[test]

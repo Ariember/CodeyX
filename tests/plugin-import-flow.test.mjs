@@ -200,6 +200,8 @@ test("installation errors refresh state, preserve the preview and offer a workin
   latest(harness, "install_codey_plugin").reject(new Error("磁盘空间不足")); await flush();
   latest(harness, "list_codey_plugins").resolve(result()); await flush(); harness.render();
   assert.match(harness.text, /导入插件失败.*磁盘空间不足/);
+  assert.equal(harness.find("Button").filter(node => text(node) === "重试导入").length, 1);
+  assert.equal(button(harness, "重试检查"), undefined);
   assert.equal(button(harness, "重试导入").props.disabled, false);
   click(harness, "重试导入");
   latest(harness, "install_codey_plugin").resolve(result([plugin()])); await flush(); harness.render();
